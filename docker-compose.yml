@@ -1,0 +1,81 @@
+services:
+  app:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+      documents-api:
+        condition: service_started
+    restart: unless-stopped
+    env_file:
+      - app/.env
+    environment:
+      - HOST=0.0.0.0
+    ports:
+      - "127.0.0.1:4130:3000"
+    networks:
+      - app-network
+
+  documents-api:
+    build:
+      context: ./documents-api
+    ports:
+      - "127.0.0.1:9221:9219"
+    volumes:
+      - ./documents-api:/app
+      - ./documents-api/.env:/app/.env
+    env_file:
+      - ./documents-api/.env
+    depends_on:
+      - redis
+    networks:
+      - app-network
+
+  celery-worker:
+    build:
+      context: ./documents-api
+    command: celery -A celery_app worker --loglevel=info --concurrency=10
+    volumes:
+      - ./documents-api:/app
+      - ./documents-api/.env:/app/.env
+    env_file:
+      - ./documents-api/.env
+    depends_on:
+      - redis
+      - db
+    networks:
+      - app-network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    networks:
+      - app-network
+
+  db:
+    image: postgres:16
+    container_name: remote-db-check
+    command: ["sleep", "infinity"]
+    volumes:
+      - ./documents-api:/app
+      - ./documents-api/.env:/app/.env
+    env_file:
+      - ./documents-api/.env
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - app-network
+
+networks:
+  app-network:
+
+volumes:
+  db-data:
+  redis-data:
