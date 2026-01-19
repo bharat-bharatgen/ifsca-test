@@ -1,0 +1,21 @@
+{
+  "name": "DMS",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "app:dev": "cd app && pnpm dev",
+    "app:build": "cd app && pnpm build",
+    "app:start": "cd app && pnpm start",
+    "documents-api:dev": "cd documents-api &&  poetry run python server.py",
+    "celery:dev": "cd documents-api && poetry run celery -A celery_app worker --loglevel=info --concurrency=2",
+    "dev": "concurrently --names \"Next JS App, Documents API, Celery Worker\" --prefix-colors \"green,magenta,cyan\" \"pnpm app:dev\" \"pnpm documents-api:dev\" \"pnpm celery:dev\"",
+    "start": "concurrently --names \"Next JS App, Documents API\" --prefix-colors \"green,magenta\" \"pnpm app:start\" \"pnpm documents-api:dev\"",
+    "golive": "pnpm dev"
+  },
+  "dependencies": {
+    "concurrently": "^8.2.2",
+    "ra-data-simple-rest": "^5.12.3",
+    "react-admin": "^5.12.3"
+  }
+}

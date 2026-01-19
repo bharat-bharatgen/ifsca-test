@@ -1,0 +1,12 @@
+.video-demo-mac::before {
+  content: " ";
+  grid-area: 1 / 1 / 2 / 2;
+  display: table;
+}
+
+.video-demo-mac::after {
+  content: " ";
+  grid-area: 1 / 1 / 2 / 2;
+  display: table;
+  clear: both;
+}

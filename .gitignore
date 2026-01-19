@@ -1,0 +1,8 @@
+contracts-api/
+app-root/
+
+.env
+
+
+node_modules/
+db/.env

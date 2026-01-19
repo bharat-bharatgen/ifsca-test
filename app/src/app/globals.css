@@ -1,0 +1,204 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 224 71.4% 4.1%;
+    --card: 0 0% 100%;
+    --card-foreground: 224 71.4% 4.1%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 224 71.4% 4.1%;
+    --primary: 262.1 83.3% 57.8%;
+    --primary-foreground: 210 20% 98%;
+    --secondary: 220 14.3% 95.9%;
+    --secondary-foreground: 220.9 39.3% 11%;
+    --muted: 220 14.3% 95.9%;
+    --muted-foreground: 220 8.9% 46.1%;
+    --accent: 220 14.3% 95.9%;
+    --accent-foreground: 220.9 39.3% 11%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 20% 98%;
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 262.1 83.3% 57.8%;
+    --radius: 0.5rem;
+
+    /* React Pdf Viewer */
+    /* --rpv-default-layout__body-background-color: var(--background) !important;
+    --rpv-default-layout__container-border-color: var(--border) !important;
+    --rpv-default-layout__toolbar-background-color: var(--secondary) !important;
+    --rpv-default-layout__toolbar-border-bottom-color: var(--border) !important;
+    --rpv-default-layout__sidebar-border-color: var(--border) !important;
+    --rpv-default-layout__sidebar--opened-background-color: var(
+      --background
+    ) !important;
+    --rpv-default-layout__sidebar-headers-background-color: var(
+      --secondary
+    ) !important;
+    --rpv-default-layout__sidebar-content--opened-background-color: var(
+      --background
+    ) !important;
+    --rpv-default-layout__sidebar-content--opened-border-color: var(
+      --border
+    ) !important;
+    --rpv-default-layout__sidebar-content--opened-color: var(
+      --foreground
+    ) !important; */
+  }
+
+  .dark {
+    --background: 224 71.4% 4.1%;
+    --foreground: 210 20% 98%;
+    --card: 224 71.4% 4.1%;
+    --card-foreground: 210 20% 98%;
+    --popover: 224 71.4% 4.1%;
+    --popover-foreground: 210 20% 98%;
+    --primary: 263.4 70% 50.4%;
+    --primary-foreground: 210 20% 98%;
+    --secondary: 215 27.9% 16.9%;
+    --secondary-foreground: 210 20% 98%;
+    --muted: 215 27.9% 16.9%;
+    --muted-foreground: 217.9 10.6% 64.9%;
+    --accent: 215 27.9% 16.9%;
+    --accent-foreground: 210 20% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 20% 98%;
+    --border: 215 27.9% 16.9%;
+    --input: 215 27.9% 16.9%;
+    --ring: 263.4 70% 50.4%;
+
+    /* React Pdf Viewer */
+    /* --rpv-default-layout__body-background-color: var(--background) !important;
+    --rpv-default-layout__container-border-color: var(--border) !important;
+    --rpv-default-layout__toolbar-background-color: var(--secondary) !important;
+    --rpv-default-layout__toolbar-border-bottom-color: var(--border) !important;
+    --rpv-default-layout__sidebar-border-color: var(--border) !important;
+    --rpv-default-layout__sidebar--opened-background-color: var(
+      --background
+    ) !important;
+     
+    --rpv-default-layout__sidebar-headers-background-color: var(
+      --secondary
+    ) !important;
+    --rpv-default-layout__sidebar-content--opened-background-color: var(
+      --background
+    ) !important;
+    --rpv-default-layout__sidebar-content--opened-border-color: var(
+      --border
+    ) !important;
+    --rpv-default-layout__sidebar-content--opened-color: var(
+      --foreground
+    ) !important; */
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+.react-chatbot-kit-chat-container {
+  border-width: 0.4px;
+  border-color: var(--primary-foreground);
+  border-style: solid;
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: 0 0 30px 0 rgba(0, 0, 0, 0.1);
+}
+
+.driver-popover.driverjs-theme {
+  background-color: #6d28d9; /* Purple background */
+  color: #fff; /* White text */
+  border-radius: 8px; /* Rounded corners */
+  padding: 16px; /* Padding */
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); /* Subtle shadow */
+}
+
+.driver-popover.driverjs-theme .driver-popover-title {
+  font-size: 20px; /* Larger title font size */
+  font-weight: bold; /* Bold title */
+  margin-bottom: 8px; /* Space below title */
+}
+
+.driver-popover.driverjs-theme .driver-popover-description,
+.driver-popover.driverjs-theme .driver-popover-progress-text {
+  color: #e5e5e5; /* Light grey text for better readability */
+  font-size: 14px; /* Description font size */
+  margin-bottom: 12px; /* Space below description */
+}
+
+.driver-popover.driverjs-theme button {
+  flex: 1; /* Make buttons equally wide */
+  text-align: center;
+  background-color: #000; /* Black background */
+  color: #fff; /* White text */
+  border: 2px solid #000; /* Black border */
+  text-shadow: none; /* No text shadow */
+  font-size: 14px; /* Button font size */
+  padding: 8px 12px; /* Button padding */
+  border-radius: 4px; /* Rounded button corners */
+  transition: background-color 0.3s; /* Smooth hover transition */
+}
+
+.driver-popover.driverjs-theme button:hover {
+  background-color: #000;
+  border-color: #333; /* Darker border on hover */
+}
+
+.driver-popover.driverjs-theme .driver-popover-navigation-btns {
+  justify-content: space-between;
+  gap: 8px; /* Space between buttons */
+}
+
+.driver-popover.driverjs-theme .driver-popover-close-btn {
+  margin: 4px;
+  color: #fff; /* White close button */
+  background-color: transparent; /* Transparent background */
+  border: none; /* No border */
+  font-size: 16px; /* Larger close button */
+  cursor: pointer; /* Pointer cursor on hover */
+  transition: color 0.3s; /* Smooth color transition */
+  padding: 0;
+}
+
+.driver-popover.driverjs-theme
+  .driver-popover-arrow-side-left.driver-popover-arrow {
+  border-left-color: #6d28d9;
+}
+
+.driver-popover.driverjs-theme
+  .driver-popover-arrow-side-right.driver-popover-arrow {
+  border-right-color: #6d28d9;
+}
+
+.driver-popover.driverjs-theme
+  .driver-popover-arrow-side-top.driver-popover-arrow {
+  border-top-color: #6d28d9;
+}
+
+.driver-popover.driverjs-theme
+  .driver-popover-arrow-side-bottom.driver-popover-arrow {
+  border-bottom-color: #6d28d9;
+}
+.react-pdf__Page__canvas {
+  margin: 0 auto;
+  display: block;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.toc {
+  position: -webkit-sticky;
+  position: sticky;
+  top: 20px;
+}
+
+:root {
+}

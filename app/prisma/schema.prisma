@@ -1,0 +1,395 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                  String                  @id @default(cuid())
+  name                String?
+  email               String                  @unique
+  password            String
+  emailVerified       DateTime?
+  image               String?
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+  roleId              Int                     @default(1)
+  organizationId      String?
+  sessions            Session[]
+  passwordResetTokens PasswordResetToken[]
+  otps                Otp[]
+  conversations       Conversation[]
+  aiChats             AiChat[]
+  role                Role                    @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  organization        Organization?           @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  organizationMembers OrganizationMember[]
+  Documents           Document[]
+  tokenUsage          TokenUsage[]
+  apiKeys             ApiKey[]
+  processingJobs      DocumentProcessingJob[]
+  sentInvitations     Invitation[]            @relation("InvitationSentBy")
+
+  @@index([organizationId])
+}
+
+model Organization {
+  id          String               @id @default(cuid())
+  name        String
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+  users       User[]
+  members     OrganizationMember[]
+  documents   Document[]
+  invitations Invitation[]
+
+  @@map("organizations")
+}
+
+model OrganizationMember {
+  id             String           @id @default(cuid())
+  userId         String
+  organizationId String
+  role           OrganizationRole @default(MEMBER)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+  @@map("organization_members")
+}
+
+enum OrganizationRole {
+  ADMIN
+  MEMBER
+}
+
+model Invitation {
+  id             String           @id @default(cuid())
+  email          String
+  organizationId String
+  role           OrganizationRole @default(MEMBER)
+  status         InvitationStatus @default(PENDING)
+  token          String           @unique
+  invitedById    String
+  expiresAt      DateTime
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedBy      User             @relation("InvitationSentBy", fields: [invitedById], references: [id], onDelete: Cascade)
+
+  @@index([email])
+  @@index([organizationId])
+  @@index([token])
+  @@map("invitations")
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+}
+
+model Document {
+  id                      String                   @id @default(cuid())
+  title                   String?
+  description             String?
+  promisor                String?
+  promisee                String?
+  documentValue           Float?
+  duration                Int?
+  type                    String?
+  date                    DateTime?
+  uploadedAt              DateTime                 @default(now())
+  userId                  String?
+  organizationId          String?
+  documentUrl             String?
+  documentText            String?
+  documentName            String?
+  fileHash                String?                  @db.Char(64)
+  city                    String?
+  country                 String?
+  state                   String?
+  location                String?
+  documentNumber          String?
+  documentNumberLabel     String?
+  documentType            DocumentType             @default(GENERATED)
+  category                String?                  @default("Miscellaneous")
+  subCategory             String?
+  categoryConfidence      Float?                   @default(0.5)
+  migrationTestField      String?                  @default("auto-migration-works")
+  // LAND document type fields
+  registrationNo          String?
+  registrationDate        DateTime?
+  landDocumentType        String?
+  landDocumentDate        DateTime?
+  seller                  String?
+  purchaser               String?
+  surveyNo                String?
+  ctsNo                   String?
+  gutNo                   String?
+  plotNo                  String?
+  noOfPages               Int?
+  village                 String?
+  taluka                  String?
+  pincode                 String?
+  // LIASION document type fields
+  applicationNo           String?
+  applicationDate         DateTime?
+  companyName             String?
+  authorityName           String?
+  approvalNo              String?
+  orderNo                 String?
+  approvalDate            DateTime?
+  buildingName            String?
+  projectName             String?
+  expiryDate              DateTime?
+  sector                  String?
+  subject                 String?
+  drawingNo               String?
+  drawingDate             DateTime?
+  buildingType            String?
+  commenceCertificate     String?
+  intimationOfDisapproval String?
+  intimationOfApproval    String?
+  rera                    String?
+  // LEGAL document type fields
+  caseType                String?
+  caseNo                  String?
+  caseDate                DateTime?
+  court                   String?
+  applicant               String?
+  petitioner              String?
+  respondent              String?
+  plaintiff               String?
+  defendant               String?
+  advocateName            String?
+  judicature              String?
+  coram                   String?
+  search_vector           Unsupported("tsvector")?
+  AiChats                 AiChat[]
+  documentInfo            DocumentInfo?
+  documentEmbeddings      DocumentEmbedding[]
+  documentSummaries       DocumentSummary[]
+  documentMetadata        DocumentMetadata[]
+  processingJobs          DocumentProcessingJob[]
+  User                    User?                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization            Organization?            @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
+  @@index([fileHash])
+  @@index([organizationId])
+  @@map("documents")
+}
+
+model AiChat {
+  id             String        @id @default(cuid())
+  userId         String?
+  message        String
+  sender         AiChatSender  @default(USER)
+  documentId     String?
+  conversationId String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  document       Document?     @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user           User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+}
+
+model DocumentInfo {
+  id              String                      @id @default(cuid())
+  documentId      String                      @unique
+  document        String
+  createdAt       DateTime                    @default(now())
+  updatedAt       DateTime                    @updatedAt
+  isLocked        Boolean                     @default(false)
+  htmlDoc         String?
+  jsonDoc         Json?
+  filePath        String?
+  embedding       Unsupported("vector")?
+  embedding_256d  Unsupported("vector(256)")?
+  embedding_model String?                     @default("gemini-embedding-001")
+  Document        Document                    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@map("document_info")
+}
+
+model DocumentEmbedding {
+  id              String                      @id @default(cuid())
+  documentId      String
+  chunkIndex      Int
+  textChunk       String
+  embedding       Unsupported("vector(768)")?
+  embedding_256d  Unsupported("vector(256)")?
+  embedding_model String?                     @default("gemini-embedding-001")
+  document        Document                    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, chunkIndex])
+  @@index([documentId, chunkIndex])
+  @@map("document_embeddings")
+}
+
+model DocumentSummary {
+  id              String                      @id @default(cuid())
+  documentId      String
+  summary         String
+  embedding       Unsupported("vector(768)")?
+  embedding_256d  Unsupported("vector(256)")?
+  embedding_model String?                     @default("gemini-embedding-001")
+  createdAt       DateTime                    @default(now())
+  updatedAt       DateTime                    @updatedAt
+  isActive        Boolean                     @default(true)
+  document        Document                    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@map("document_summaries")
+}
+
+model Conversation {
+  id            String   @id @default(cuid())
+  userId        String
+  title         String?
+  summary       String?  @db.Text
+  lastMessageAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  User          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages      AiChat[]
+
+  @@index([userId, lastMessageAt])
+  @@map("conversations")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  expires   DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Role {
+  id        Int      @id @default(autoincrement())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  users     User[]
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model PasswordResetToken {
+  id      String   @id @default(cuid())
+  userId  String
+  token   String   @unique
+  expires DateTime
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Otp {
+  id      String   @id @default(cuid())
+  userId  String
+  otpCode String
+  expires DateTime
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum DocumentType {
+  GENERATED
+  UPLOADED
+}
+
+enum AiChatSender {
+  USER
+  AGENT
+}
+
+model TokenUsage {
+  id           String   @id @default(cuid())
+  userId       String
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  endpointType String?  @default("document-chat") // "document-chat" or "global-chat"
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([endpointType])
+  @@map("token_usage")
+}
+
+model AdminEmail {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  keyHash    String    @unique
+  userId     String
+  name       String?
+  isActive   Boolean   @default(true)
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([keyHash])
+  @@index([userId])
+  @@map("api_keys")
+}
+
+enum ProcessingJobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model DocumentProcessingJob {
+  id           String              @id @default(cuid())
+  jobId        String              @unique
+  userId       String
+  documentId   String?
+  status       ProcessingJobStatus @default(PENDING)
+  documentUrl  String
+  webhookUrl   String?
+  errorMessage String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  completedAt  DateTime?
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  document     Document?           @relation(fields: [documentId], references: [id], onDelete: SetNull)
+
+  @@index([jobId])
+  @@index([userId])
+  @@index([status])
+  @@map("document_processing_jobs")
+}
+
+model DocumentMetadata {
+  id         String   @id @default(cuid())
+  documentId String
+  key        String
+  value      String   @db.Text
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, key])
+  @@index([documentId])
+  @@map("document_metadata")
+}

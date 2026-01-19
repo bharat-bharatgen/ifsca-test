@@ -1,0 +1,813 @@
+{
+	"info": {
+		"_postman_id": "dms-public-api-collection",
+		"name": "DMS Public API",
+		"description": "Collection for testing DMS Public API endpoints including API key management and document processing",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Authentication",
+			"item": [
+				{
+					"name": "Login",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"exec": [
+									"// Get CSRF token before login (async but will complete before request)",
+									"pm.sendRequest({",
+									"    url: pm.environment.get(\"base_url\") + \"/api/auth/csrf\",",
+									"    method: 'GET'",
+									"}, function (err, res) {",
+									"    if (!err && res && res.json && res.json().csrfToken) {",
+									"        pm.environment.set(\"csrf_token\", res.json().csrfToken);",
+									"        console.log(\"✅ CSRF token fetched\");",
+									"    } else {",
+									"        console.log(\"⚠️ Could not fetch CSRF token, using existing one if available\");",
+									"    }",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"// Extract session cookie from response headers",
+									"let sessionTokenFound = false;",
+									"",
+									"// Method 1: Check Set-Cookie header",
+									"const setCookieHeader = pm.response.headers.get('Set-Cookie');",
+									"if (setCookieHeader) {",
+									"    const sessionTokenMatch = setCookieHeader.match(/next-auth\\.session-token=([^;]+)/);",
+									"    if (sessionTokenMatch && sessionTokenMatch[1]) {",
+									"        pm.environment.set(\"session_token\", sessionTokenMatch[1]);",
+									"        console.log(\"✅ Session token saved from Set-Cookie header\");",
+									"        sessionTokenFound = true;",
+									"    }",
+									"}",
+									"",
+									"// Method 2: Check all Set-Cookie headers (multiple headers)",
+									"const allHeaders = pm.response.headers.all();",
+									"allHeaders.forEach(header => {",
+									"    if (header.key === 'Set-Cookie' && header.value) {",
+									"        const match = header.value.match(/next-auth\\.session-token=([^;]+)/);",
+									"        if (match && match[1]) {",
+									"            pm.environment.set(\"session_token\", match[1]);",
+									"            console.log(\"✅ Session token saved from Set-Cookie header (multiple)\");",
+									"            sessionTokenFound = true;",
+									"        }",
+									"    }",
+									"});",
+									"",
+									"// Method 3: Check cookies stored by Postman",
+									"const responseCookies = pm.cookies.all();",
+									"const sessionCookie = responseCookies.find(cookie => cookie.name === 'next-auth.session-token');",
+									"if (sessionCookie) {",
+									"    pm.environment.set(\"session_token\", sessionCookie.value);",
+									"    console.log(\"✅ Session token saved from Postman cookies\");",
+									"    sessionTokenFound = true;",
+									"}",
+									"",
+									"// Check response",
+									"try {",
+									"    const responseBody = pm.response.json();",
+									"    if (responseBody && responseBody.url) {",
+									"        if (responseBody.url.includes('/signin')) {",
+									"            console.log(\"⚠️ Login may have failed - redirecting back to signin\");",
+									"            console.log(\"Response:\", JSON.stringify(responseBody));",
+									"        } else {",
+									"            console.log(\"✅ Login successful! NextAuth redirected to:\", responseBody.url);",
+									"        }",
+									"    }",
+									"} catch (e) {",
+									"    // Response might not be JSON",
+									"}",
+									"",
+									"if (pm.response.code === 200) {",
+									"    if (sessionTokenFound) {",
+									"        console.log(\"✅ Login successful! Session cookie saved.\");",
+									"    } else {",
+									"        console.log(\"⚠️ Login response received but session cookie not found. Check response headers.\");",
+									"    }",
+									"} else if (pm.response.code === 302 || pm.response.code === 307 || pm.response.code === 308) {",
+									"    const location = pm.response.headers.get('Location');",
+									"    console.log(\"✅ Login successful! Redirected to:\", location);",
+									"} else if (pm.response.code === 401 || pm.response.code === 403) {",
+									"    console.log(\"❌ Login failed. Check your email and password.\");",
+									"} else {",
+									"    console.log(\"Response code:\", pm.response.code);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/x-www-form-urlencoded"
+							},
+							{
+								"key": "Accept",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "email",
+									"value": "{{user_email}}",
+									"description": "Your email address",
+									"type": "text"
+								},
+								{
+									"key": "password",
+									"value": "{{user_password}}",
+									"description": "Your password",
+									"type": "text"
+								},
+								{
+									"key": "csrfToken",
+									"value": "{{csrf_token}}",
+									"description": "CSRF token (auto-fetched)",
+									"type": "text"
+								},
+								{
+									"key": "callbackUrl",
+									"value": "{{base_url}}/app",
+									"description": "Redirect URL after login",
+									"type": "text"
+								},
+								{
+									"key": "json",
+									"value": "true",
+									"description": "Return JSON response instead of redirect",
+									"type": "text"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{base_url}}/api/auth/signin/login",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"signin",
+								"login"
+							]
+						},
+						"description": "Login to get session cookie. Uses provider ID 'login' (matching your frontend). Automatically fetches CSRF token and saves session cookie. Make sure to set user_email and user_password in your environment first. Note: NextAuth may redirect - cookies will still be extracted."
+					},
+					"response": []
+				},
+				{
+					"name": "Verify Session",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    const response = pm.response.json();",
+									"    if (response && response.user) {",
+									"        console.log(\"✅ Session is valid! User:\", response.user.email);",
+									"    } else {",
+									"        console.log(\"❌ No active session found\");",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Cookie",
+								"value": "next-auth.session-token={{session_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/auth/session",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"session"
+							]
+						},
+						"description": "Verify if the session cookie is valid. Use this after login to confirm the session was created successfully."
+					},
+					"response": []
+				},
+				{
+					"name": "Get CSRF Token",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    const response = pm.response.json();",
+									"    if (response.csrfToken) {",
+									"        pm.environment.set(\"csrf_token\", response.csrfToken);",
+									"        console.log(\"CSRF token saved\");",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/auth/csrf",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"csrf"
+							]
+						},
+						"description": "Get CSRF token required for NextAuth login. Run this first, then use the Login request."
+					},
+					"response": []
+				},
+				{
+					"name": "Login (with CSRF)",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"exec": [
+									"// Get CSRF token before login (async but will complete before request)",
+									"pm.sendRequest({",
+									"    url: pm.environment.get(\"base_url\") + \"/api/auth/csrf\",",
+									"    method: 'GET'",
+									"}, function (err, res) {",
+									"    if (!err && res && res.json && res.json().csrfToken) {",
+									"        pm.environment.set(\"csrf_token\", res.json().csrfToken);",
+									"        console.log(\"✅ CSRF token fetched\");",
+									"    } else {",
+									"        console.log(\"⚠️ Could not fetch CSRF token, using existing one if available\");",
+									"    }",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"// Extract session cookie from response headers",
+									"let sessionTokenFound = false;",
+									"",
+									"// Method 1: Check Set-Cookie header",
+									"const setCookieHeader = pm.response.headers.get('Set-Cookie');",
+									"if (setCookieHeader) {",
+									"    const sessionTokenMatch = setCookieHeader.match(/next-auth\\.session-token=([^;]+)/);",
+									"    if (sessionTokenMatch && sessionTokenMatch[1]) {",
+									"        pm.environment.set(\"session_token\", sessionTokenMatch[1]);",
+									"        console.log(\"✅ Session token saved from Set-Cookie header\");",
+									"        sessionTokenFound = true;",
+									"    }",
+									"}",
+									"",
+									"// Method 2: Check all Set-Cookie headers (multiple headers)",
+									"const allHeaders = pm.response.headers.all();",
+									"allHeaders.forEach(header => {",
+									"    if (header.key === 'Set-Cookie' && header.value) {",
+									"        const match = header.value.match(/next-auth\\.session-token=([^;]+)/);",
+									"        if (match && match[1]) {",
+									"            pm.environment.set(\"session_token\", match[1]);",
+									"            console.log(\"✅ Session token saved from Set-Cookie header (multiple)\");",
+									"            sessionTokenFound = true;",
+									"        }",
+									"    }",
+									"});",
+									"",
+									"// Method 3: Check cookies stored by Postman",
+									"const responseCookies = pm.cookies.all();",
+									"const sessionCookie = responseCookies.find(cookie => cookie.name === 'next-auth.session-token');",
+									"if (sessionCookie) {",
+									"    pm.environment.set(\"session_token\", sessionCookie.value);",
+									"    console.log(\"✅ Session token saved from Postman cookies\");",
+									"    sessionTokenFound = true;",
+									"}",
+									"",
+									"// Check response",
+									"try {",
+									"    const responseBody = pm.response.json();",
+									"    if (responseBody && responseBody.url) {",
+									"        if (responseBody.url.includes('/signin')) {",
+									"            console.log(\"⚠️ Login may have failed - redirecting back to signin\");",
+									"            console.log(\"Response:\", JSON.stringify(responseBody));",
+									"        } else {",
+									"            console.log(\"✅ Login successful! NextAuth redirected to:\", responseBody.url);",
+									"        }",
+									"    }",
+									"} catch (e) {",
+									"    // Response might not be JSON",
+									"}",
+									"",
+									"if (pm.response.code === 200) {",
+									"    if (sessionTokenFound) {",
+									"        console.log(\"✅ Login successful! Session cookie saved.\");",
+									"    } else {",
+									"        console.log(\"⚠️ Login response received but session cookie not found. Check response headers.\");",
+									"    }",
+									"} else if (pm.response.code === 302 || pm.response.code === 307 || pm.response.code === 308) {",
+									"    const location = pm.response.headers.get('Location');",
+									"    console.log(\"✅ Login successful! Redirected to:\", location);",
+									"} else if (pm.response.code === 401 || pm.response.code === 403) {",
+									"    console.log(\"❌ Login failed. Check your email and password.\");",
+									"} else {",
+									"    console.log(\"Response code:\", pm.response.code);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/x-www-form-urlencoded"
+							}
+						],
+						"body": {
+							"mode": "urlencoded",
+							"urlencoded": [
+								{
+									"key": "email",
+									"value": "{{user_email}}",
+									"type": "text"
+								},
+								{
+									"key": "password",
+									"value": "{{user_password}}",
+									"type": "text"
+								},
+								{
+									"key": "csrfToken",
+									"value": "{{csrf_token}}",
+									"type": "text"
+								},
+								{
+									"key": "callbackUrl",
+									"value": "{{base_url}}/app",
+									"type": "text"
+								},
+								{
+									"key": "json",
+									"value": "true",
+									"type": "text"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{base_url}}/api/auth/signin/login",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"auth",
+								"signin",
+								"login"
+							]
+						},
+						"description": "Login with CSRF token. Uses provider ID 'login' (matching your frontend). This request will automatically get the CSRF token first, then login and save the session cookie."
+					},
+					"response": []
+				}
+			],
+			"description": "Authentication endpoints to get session cookie"
+		},
+		{
+			"name": "API Key Management",
+			"item": [
+				{
+					"name": "Generate API Key",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    const response = pm.response.json();",
+									"    if (response.apiKey && response.apiKey.key) {",
+									"        pm.environment.set(\"api_key\", response.apiKey.key);",
+									"        pm.environment.set(\"api_key_id\", response.apiKey.id);",
+									"        console.log(\"API Key saved to environment:\", response.apiKey.key);",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Cookie",
+								"value": "next-auth.session-token={{session_token}}",
+								"description": "Replace {{session_token}} with your actual session token from browser"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"name\": \"Postman Test Key\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/api-keys",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"api-keys"
+							]
+						},
+						"description": "Generate a new API key. Requires session authentication. Save the returned API key immediately - it won't be shown again!"
+					},
+					"response": []
+				},
+				{
+					"name": "List API Keys",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Cookie",
+								"value": "next-auth.session-token={{session_token}}",
+								"description": "Replace {{session_token}} with your actual session token from browser"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/api-keys",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"api-keys"
+							]
+						},
+						"description": "List all API keys for the authenticated user"
+					},
+					"response": []
+				},
+				{
+					"name": "Revoke API Key",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Cookie",
+								"value": "next-auth.session-token={{session_token}}",
+								"description": "Replace {{session_token}} with your actual session token from browser"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/api-keys?id={{api_key_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"api-keys"
+							],
+							"query": [
+								{
+									"key": "id",
+									"value": "{{api_key_id}}",
+									"description": "API key ID to revoke"
+								}
+							]
+						},
+						"description": "Revoke (deactivate) an API key"
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints for managing API keys. Requires session authentication."
+		},
+		{
+			"name": "Public API - Document Processing",
+			"item": [
+				{
+					"name": "Process Document",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    const response = pm.response.json();",
+									"    if (response.jobId) {",
+									"        pm.environment.set(\"job_id\", response.jobId);",
+									"        pm.environment.set(\"document_id\", response.documentId);",
+									"        console.log(\"Job ID saved:\", response.jobId);",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"description": "Your API key (starts with dms_)"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"documentUrl\": \"https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf\",\n    \"metadata\": {\n        \"source\": \"external-system\",\n        \"department\": \"legal\",\n        \"priority\": \"high\",\n        \"customField\": \"customValue\",\n        \"referenceNumber\": \"REF-12345\"\n    },\n    \"webhookUrl\": \"https://webhook.site/your-unique-url\",\n    \"documentName\": \"Test Document.pdf\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/public/documents/process",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"public",
+								"documents",
+								"process"
+							]
+						},
+						"description": "Process a document from URL. Downloads document, stores in S3, extracts metadata with AI, and processes asynchronously."
+					},
+					"response": []
+				},
+				{
+					"name": "Check Job Status",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}",
+								"description": "Your API key"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/public/documents/status/{{job_id}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"public",
+								"documents",
+								"status",
+								"{{job_id}}"
+							]
+						},
+						"description": "Check the status of a document processing job. Status can be: PENDING, PROCESSING, COMPLETED, or FAILED."
+					},
+					"response": []
+				},
+				{
+					"name": "Process Document (Minimal)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    const response = pm.response.json();",
+									"    if (response.jobId) {",
+									"        pm.environment.set(\"job_id\", response.jobId);",
+									"        console.log(\"Job ID saved:\", response.jobId);",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"documentUrl\": \"https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/public/documents/process",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"public",
+								"documents",
+								"process"
+							]
+						},
+						"description": "Minimal request - only documentUrl required. All other fields are optional."
+					},
+					"response": []
+				},
+				{
+					"name": "Process Document (With Metadata Only)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 200) {",
+									"    const response = pm.response.json();",
+									"    if (response.jobId) {",
+									"        pm.environment.set(\"job_id\", response.jobId);",
+									"        console.log(\"Job ID saved:\", response.jobId);",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "X-API-Key",
+								"value": "{{api_key}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"documentUrl\": \"https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf\",\n    \"metadata\": {\n        \"source\": \"test-system\",\n        \"department\": \"legal\",\n        \"priority\": \"high\",\n        \"referenceNumber\": \"REF-12345\",\n        \"customField1\": \"value1\",\n        \"customField2\": \"value2\"\n    }\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/public/documents/process",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v1",
+								"public",
+								"documents",
+								"process"
+							]
+						},
+						"description": "Process document with custom metadata. Metadata will be stored in document_metadata table."
+					},
+					"response": []
+				}
+			],
+			"description": "Public API endpoints for document processing. Requires API key authentication."
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:3000",
+			"type": "string"
+		},
+		{
+			"key": "api_key",
+			"value": "",
+			"type": "string",
+			"description": "Your API key (generated from Generate API Key endpoint)"
+		},
+		{
+			"key": "session_token",
+			"value": "",
+			"type": "string",
+			"description": "Session token from browser (get from DevTools after logging in)"
+		},
+		{
+			"key": "job_id",
+			"value": "",
+			"type": "string",
+			"description": "Job ID returned from Process Document endpoint"
+		},
+		{
+			"key": "document_id",
+			"value": "",
+			"type": "string",
+			"description": "Document ID returned from Process Document endpoint"
+		},
+		{
+			"key": "api_key_id",
+			"value": "",
+			"type": "string",
+			"description": "API key ID (used for revoking keys)"
+		},
+		{
+			"key": "user_email",
+			"value": "",
+			"type": "string",
+			"description": "Your login email address"
+		},
+		{
+			"key": "user_password",
+			"value": "",
+			"type": "string",
+			"description": "Your login password"
+		},
+		{
+			"key": "csrf_token",
+			"value": "",
+			"type": "string",
+			"description": "CSRF token for NextAuth (auto-generated)"
+		}
+	]
+}
+
