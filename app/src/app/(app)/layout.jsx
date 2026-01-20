@@ -34,9 +34,9 @@ export default async function AppLayout({ children }) {
 
   return (
     <div className="flex h-screen">
-      <aside className="hidden max-w-[200px] flex-col md:flex z-30">
+      {/* <aside className="hidden max-w-[200px] flex-col md:flex z-30">
         <AppNav />
-      </aside>
+      </aside> */}
       <main className="z-20 flex flex-col flex-1 w-full overflow-hidden overflow-y-scroll">
         {children}
       </main>
