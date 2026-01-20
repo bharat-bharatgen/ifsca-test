@@ -16,7 +16,6 @@ import Markdown from "react-markdown";
 import { LoaderIcon } from "lucide-react";
 import { useDocumentContext } from "./context";
 import { env } from "@/env.mjs";
-import { CHAT_ANIMATION_CHUNK_SIZE, CHAT_ANIMATION_DELAY_MS } from "@/config/chat";
 
 export const DocumentChat = () => {
   const { document, documentChats, session, setSendMessageToAI } =
@@ -30,6 +29,7 @@ export const DocumentChat = () => {
   ]);
   const [message, setMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [status, setStatus] = useState("");
   const messageListRef = useRef();
   const sendButtonRef = useRef();
 
@@ -66,43 +66,65 @@ export const DocumentChat = () => {
       let fullText = "";
       const timeStart = Date.now();
 
+      setStatus("Thinking...");
+
       // Add placeholder for streaming message
       setChats((prevChats) => [
         ...prevChats,
-        { message: "", sender: "AGENT", id: timeStart, isStreaming: true },
+        {
+          message: "",
+          sender: "AGENT",
+          id: timeStart,
+          isStreaming: true,
+          status: "Thinking...",
+        },
       ]);
-
-      // Helper for animation delay
-      const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-      // Animate text character by character
-      const animateText = async (text) => {
-        for (let i = 0; i < text.length; i += CHAT_ANIMATION_CHUNK_SIZE) {
-          const chars = text.slice(i, i + CHAT_ANIMATION_CHUNK_SIZE);
-          fullText += chars;
-
-          setChats((prevChats) =>
-            prevChats.map((chat) =>
-              chat.id === timeStart ? { ...chat, message: fullText } : chat
-            )
-          );
-
-          await delay(CHAT_ANIMATION_DELAY_MS);
-        }
-      };
 
       try {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
           const chunk = decoder.decode(value, { stream: true });
-          
-          // Filter out token usage markers while preserving formatting
+
           let processedChunk = chunk;
-          processedChunk = processedChunk.replace(/__TOKEN_USAGE__:[^\n]*\n?/g, "");
-          
-          if (processedChunk) {
-            await animateText(processedChunk);
+          let currentStatus = null;
+
+          // Check for Status updates
+          const statusMatch = processedChunk.match(/__STATUS__:([^\n]+)/);
+          if (statusMatch) {
+            currentStatus = statusMatch[1].trim();
+            setStatus(currentStatus);
+            processedChunk = processedChunk.replace(
+              /__STATUS__:[^\n]*\n?/g,
+              "",
+            );
+          }
+
+          // Filter out token usage markers while preserving formatting
+          processedChunk = processedChunk.replace(
+            /__TOKEN_USAGE__:[^\n]*\n?/g,
+            "",
+          );
+
+          if (processedChunk && processedChunk.trim()) {
+            fullText += processedChunk;
+            // Clear status when actual content starts streaming
+            setChats((prevChats) =>
+              prevChats.map((chat) =>
+                chat.id === timeStart
+                  ? { ...chat, message: fullText, status: null }
+                  : chat,
+              ),
+            );
+          } else if (currentStatus) {
+            // Only status update, no content yet
+            setChats((prevChats) =>
+              prevChats.map((chat) =>
+                chat.id === timeStart
+                  ? { ...chat, status: currentStatus }
+                  : chat,
+              ),
+            );
           }
         }
       } catch (error) {
@@ -110,10 +132,13 @@ export const DocumentChat = () => {
         throw error;
       } finally {
         // Mark streaming as complete
+        setStatus("");
         setChats((prevChats) =>
           prevChats.map((chat) =>
-            chat.id === timeStart ? { ...chat, isStreaming: false } : chat
-          )
+            chat.id === timeStart
+              ? { ...chat, isStreaming: false, status: null }
+              : chat,
+          ),
         );
       }
     } catch (error) {
@@ -121,6 +146,7 @@ export const DocumentChat = () => {
     } finally {
       setMessage("");
       setIsSending(false);
+      setStatus("");
     }
   };
 
@@ -135,18 +161,20 @@ export const DocumentChat = () => {
   useEffect(() => {
     const fetchChats = async () => {
       try {
-        const response = await fetch(`/api/v1/chat/history?documentId=${document.id}`);
+        const response = await fetch(
+          `/api/v1/chat/history?documentId=${document.id}`,
+        );
         if (response.ok) {
           const data = await response.json();
-          setChats(prev => [...prev, ...data.chats]);
+          setChats((prev) => [...prev, ...data.chats]);
         }
       } catch (error) {
-        console.error('Error fetching chat history:', error);
+        console.error("Error fetching chat history:", error);
       } finally {
         setIsSending(false);
       }
     };
-    
+
     if (document?.id) {
       fetchChats();
     }
@@ -158,7 +186,7 @@ export const DocumentChat = () => {
       sendButtonRef.current.click();
     }, 1000);
   };
-  
+
   useEffect(() => {
     setSendMessageToAI({
       caller: async (message) => await stimulateMessageToAI(message),
@@ -201,6 +229,7 @@ export const DocumentChat = () => {
                 sender={chat.sender}
                 user={session.user}
                 isStreaming={chat.isStreaming}
+                status={chat.status}
               />
             ))}
           </div>
@@ -235,28 +264,82 @@ export const DocumentChat = () => {
   );
 };
 
-const ChatMessage = ({ message, sender, user, isStreaming = false }) => {
+const ChatMessage = ({
+  message,
+  sender,
+  user,
+  isStreaming = false,
+  status = null,
+}) => {
+  // Show typing indicator when streaming starts before content arrives
+  const showTypingIndicator = isStreaming && !message && !status;
+  // Show status indicator when there's an active status
+  const showStatusIndicator = isStreaming && status;
+  // Show message bubble only if there's content
+  const showMessageBubble = message || showTypingIndicator;
+
   return (
     <div
       className={cn(
         "flex items-start space-x-2",
-        sender === "AGENT" ? "flex-row-reverse" : "flex-row"
+        sender === "AGENT" ? "flex-row-reverse" : "flex-row",
       )}
       style={{
         justifyContent: sender === "AGENT" ? "start" : "end",
         transform: "translateZ(0)",
       }}
     >
-      <div className="p-3 text-sm bg-gray-100 rounded-lg dark:bg-gray-900 text-foreground">
-        <Markdown>{message}</Markdown>
-        {isStreaming && (
-          <span className="inline-block w-2 h-4 ml-1 bg-current animate-pulse" />
+      <div className="flex flex-col gap-1 max-w-[80%]">
+        {/* Status indicator - shown above message bubble during processing */}
+        {showStatusIndicator && (
+          <div className="flex items-center gap-2 px-3 py-2 text-xs duration-200 rounded-lg text-muted-foreground bg-muted/50 animate-in fade-in">
+            <div className="flex gap-1">
+              <span
+                className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce"
+                style={{ animationDelay: "0ms" }}
+              ></span>
+              <span
+                className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce"
+                style={{ animationDelay: "150ms" }}
+              ></span>
+              <span
+                className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce"
+                style={{ animationDelay: "300ms" }}
+              ></span>
+            </div>
+            <span className="animate-pulse">{status}</span>
+          </div>
+        )}
+
+        {/* Message bubble - shown when there's content or typing */}
+        {showMessageBubble && (
+          <div className="p-3 text-sm bg-gray-100 rounded-lg dark:bg-gray-900 text-foreground">
+            <Markdown>{message}</Markdown>
+            {showTypingIndicator && (
+              <div className="flex items-center h-4 gap-1">
+                <span
+                  className="w-2 h-2 bg-current rounded-full animate-bounce"
+                  style={{ animationDelay: "0ms" }}
+                ></span>
+                <span
+                  className="w-2 h-2 bg-current rounded-full animate-bounce"
+                  style={{ animationDelay: "150ms" }}
+                ></span>
+                <span
+                  className="w-2 h-2 bg-current rounded-full animate-bounce"
+                  style={{ animationDelay: "300ms" }}
+                ></span>
+              </div>
+            )}
+            {/* Streaming cursor when content is being added */}
+            {isStreaming && message && (
+              <span className="inline-block w-0.5 h-4 ml-0.5 bg-primary animate-pulse" />
+            )}
+          </div>
         )}
       </div>
       <Avatar>
-        <AvatarImage
-          src={sender === "AGENT" ? "/icon.png" : user.image}
-        />
+        <AvatarImage src={sender === "AGENT" ? "/icon.png" : user.image} />
         <AvatarFallback>
           {sender === "AGENT" ? "AI" : user.name[0]}
         </AvatarFallback>
@@ -284,4 +367,3 @@ function ArrowUpIcon(props) {
     </svg>
   );
 }
-

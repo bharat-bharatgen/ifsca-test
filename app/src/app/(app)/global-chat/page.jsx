@@ -5,11 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  Send,
-  Bot,
-  FileText,
-} from "lucide-react";
+import { Send, Bot, FileText } from "lucide-react";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import Markdown from "react-markdown";
@@ -25,10 +21,8 @@ import { DOCUMENT_FORMATTING } from "@/lib/document-formatting";
 import { getDocumentMarkdownComponents } from "@/lib/markdown";
 import DesktopConversationSidebar from "@/components/desktop";
 import MobileConversationSidebar from "@/components/mobile";
-import { CHAT_ANIMATION_CHUNK_SIZE, CHAT_ANIMATION_DELAY_MS } from "@/config/chat";
 
 const markdownComponents = getDocumentMarkdownComponents(DOCUMENT_FORMATTING);
-
 
 export default function GlobalChatPage() {
   const [messages, setMessages] = useState([]);
@@ -70,7 +64,7 @@ export default function GlobalChatPage() {
   useEffect(() => {
     if (scrollAreaRef.current) {
       const scrollElement = scrollAreaRef.current.querySelector(
-        "[data-radix-scroll-area-viewport]"
+        "[data-radix-scroll-area-viewport]",
       );
       if (scrollElement) {
         scrollElement.scrollTop = scrollElement.scrollHeight;
@@ -123,7 +117,11 @@ export default function GlobalChatPage() {
           setContracts(documents);
           console.log("Loaded documents for mentions:", documents.length);
         } else {
-          console.error("Failed to load documents:", res.status, res.statusText);
+          console.error(
+            "Failed to load documents:",
+            res.status,
+            res.statusText,
+          );
         }
       } catch (e) {
         console.error("Failed to load documents for mentions", e);
@@ -135,7 +133,7 @@ export default function GlobalChatPage() {
   const loadConversationMessages = async (id) => {
     try {
       const res = await fetch(
-        `/api/v1/chat/global/history?conversationId=${encodeURIComponent(id)}&limit=10`
+        `/api/v1/chat/global/history?conversationId=${encodeURIComponent(id)}&limit=10`,
       );
       if (res.ok) {
         const data = await res.json();
@@ -151,11 +149,13 @@ export default function GlobalChatPage() {
         // Merge with existing messages, filtering out temporary user messages that have been replaced
         setMessages((prevMessages) => {
           // Keep only non-temporary messages (those with database IDs, not starting with 'user-')
-          const nonTemporaryMessages = prevMessages.filter(msg => !msg.id.startsWith('user-'));
+          const nonTemporaryMessages = prevMessages.filter(
+            (msg) => !msg.id.startsWith("user-"),
+          );
 
           // Add new messages from database that aren't already present
-          const existingIds = new Set(nonTemporaryMessages.map(m => m.id));
-          const newMessages = mappedAsc.filter(m => !existingIds.has(m.id));
+          const existingIds = new Set(nonTemporaryMessages.map((m) => m.id));
+          const newMessages = mappedAsc.filter((m) => !existingIds.has(m.id));
 
           return [...nonTemporaryMessages, ...newMessages];
         });
@@ -185,7 +185,9 @@ export default function GlobalChatPage() {
       setIsLoadingMore(true);
       const params = new URLSearchParams({ conversationId, limit: "10" });
       if (nextBefore) params.set("before", nextBefore);
-      const res = await fetch(`/api/v1/chat/global/history?${params.toString()}`);
+      const res = await fetch(
+        `/api/v1/chat/global/history?${params.toString()}`,
+      );
       if (res.ok) {
         const data = await res.json();
         const mappedDesc = (data.messages || []).map((m) => ({
@@ -199,7 +201,7 @@ export default function GlobalChatPage() {
         setMessages((prev) => {
           const allMessages = [...mappedAsc, ...prev];
           const seen = new Set();
-          return allMessages.filter(msg => {
+          return allMessages.filter((msg) => {
             if (seen.has(msg.id)) return false;
             seen.add(msg.id);
             return true;
@@ -259,6 +261,7 @@ export default function GlobalChatPage() {
       timestamp: new Date().toISOString(),
       isStreaming: true,
       isLoadMore: isLoadMore, // Flag to identify load more responses
+      status: "Thinking...",
     };
     setMessages((prev) => [...prev, assistantMessage]);
 
@@ -290,46 +293,10 @@ export default function GlobalChatPage() {
         // Handle streaming response
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
-        let fullText = "";  // Start empty; prepend header only after successful first chunk
+        let fullText = ""; // Start empty; prepend header only after successful first chunk
         let newConversationId = null;
         let newPaginationData = null;
-        let hasReceivedContent = false;  // Track if we've received actual content
-
-        // Helper to add delay for animation effect
-        const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-        // Function to animate text character by character
-        const animateText = async (text) => {
-          // For load more responses, prepend header before first actual content
-          if (isLoadMore && !hasReceivedContent && text.trim()) {
-            hasReceivedContent = true;
-            fullText = "\n\n---\n\n**Additional Documents:**\n\n";
-            setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === assistantMessageId
-                  ? { ...msg, content: fullText }
-                  : msg
-              )
-            );
-          }
-
-          // Split into smaller chunks for smoother animation
-          for (let i = 0; i < text.length; i += CHAT_ANIMATION_CHUNK_SIZE) {
-            const chars = text.slice(i, i + CHAT_ANIMATION_CHUNK_SIZE);
-            fullText += chars;
-
-            setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === assistantMessageId
-                  ? { ...msg, content: fullText }
-                  : msg
-              )
-            );
-
-            // Small delay between character groups for typing effect
-            await delay(CHAT_ANIMATION_DELAY_MS);
-          }
-        };
+        let hasReceivedContent = false; // Track if we've received actual content
 
         let streamError = null;
         let streamSuccess = false;
@@ -347,7 +314,27 @@ export default function GlobalChatPage() {
             const convIdMatch = processedChunk.match(/__CONV_ID__:([^\n]+)/);
             if (convIdMatch) {
               newConversationId = convIdMatch[1].trim();
-              processedChunk = processedChunk.replace(/__CONV_ID__:[^\n]*\n?/g, "");
+              processedChunk = processedChunk.replace(
+                /__CONV_ID__:[^\n]*\n?/g,
+                "",
+              );
+            }
+
+            // Extract status if present
+            const statusMatch = processedChunk.match(/__STATUS__:([^\n]+)/);
+            if (statusMatch) {
+              const newStatus = statusMatch[1].trim();
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === assistantMessageId
+                    ? { ...msg, status: newStatus }
+                    : msg,
+                ),
+              );
+              processedChunk = processedChunk.replace(
+                /__STATUS__:[^\n]*\n?/g,
+                "",
+              );
             }
 
             // Extract pagination data if present
@@ -384,11 +371,27 @@ export default function GlobalChatPage() {
             }
 
             // Remove token usage markers
-            processedChunk = processedChunk.replace(/__TOKEN_USAGE__:[^\n]*\n?/g, "");
+            processedChunk = processedChunk.replace(
+              /__TOKEN_USAGE__:[^\n]*\n?/g,
+              "",
+            );
 
-            // Animate the processed chunk
-            if (processedChunk) {
-              await animateText(processedChunk);
+            if (processedChunk && processedChunk.trim()) {
+              // For load more responses, prepend header before first actual content
+              if (isLoadMore && !hasReceivedContent) {
+                hasReceivedContent = true;
+                fullText += "\n\n---\n\n**Additional Documents:**\n\n";
+              }
+
+              fullText += processedChunk;
+              // Clear status when actual content starts streaming
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === assistantMessageId
+                    ? { ...msg, content: fullText, status: null }
+                    : msg,
+                ),
+              );
             }
           }
           streamSuccess = true;
@@ -402,9 +405,14 @@ export default function GlobalChatPage() {
           setMessages((prev) =>
             prev.map((msg) =>
               msg.id === assistantMessageId
-                ? { ...msg, isStreaming: false, pagination: newPaginationData }
-                : msg
-            )
+                ? {
+                    ...msg,
+                    isStreaming: false,
+                    pagination: newPaginationData,
+                    status: null,
+                  }
+                : msg,
+            ),
           );
 
           // Only update lastQuery after successful response (not on error)
@@ -424,7 +432,9 @@ export default function GlobalChatPage() {
         const data = await response.json();
 
         // Remove the placeholder and reload from DB
-        setMessages((prev) => prev.filter((msg) => msg.id !== assistantMessageId));
+        setMessages((prev) =>
+          prev.filter((msg) => msg.id !== assistantMessageId),
+        );
 
         if (data.conversationId) {
           setConversationId(data.conversationId);
@@ -441,9 +451,13 @@ export default function GlobalChatPage() {
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === assistantMessageId
-            ? { ...msg, content: "Sorry, I encountered an error. Please try again.", isStreaming: false }
-            : msg
-        )
+            ? {
+                ...msg,
+                content: "Sorry, I encountered an error. Please try again.",
+                isStreaming: false,
+              }
+            : msg,
+        ),
       );
     } finally {
       setIsLoading(false);
@@ -457,7 +471,7 @@ export default function GlobalChatPage() {
     if (isLoadingMoreDocs) return;
 
     // Find the specific message's pagination data
-    const targetMessage = messages.find(m => m.id === messageId);
+    const targetMessage = messages.find((m) => m.id === messageId);
     const pagination = targetMessage?.pagination;
 
     if (!pagination?.hasMore) return;
@@ -465,15 +479,13 @@ export default function GlobalChatPage() {
     // Clear pagination from this message to hide the button (prevents multiple clicks)
     setMessages((prev) =>
       prev.map((msg) =>
-        msg.id === messageId
-          ? { ...msg, pagination: null }
-          : msg
-      )
+        msg.id === messageId ? { ...msg, pagination: null } : msg,
+      ),
     );
 
     sendMessage({
       offset: pagination.nextOffset,
-      isLoadMore: true
+      isLoadMore: true,
     });
   };
 
@@ -482,7 +494,9 @@ export default function GlobalChatPage() {
     if (showMention) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        setMentionIndex((prev) => Math.min(prev + 1, filteredMentions.length - 1));
+        setMentionIndex((prev) =>
+          Math.min(prev + 1, filteredMentions.length - 1),
+        );
         return;
       }
       if (e.key === "ArrowUp") {
@@ -525,18 +539,23 @@ export default function GlobalChatPage() {
     }
   };
 
-  const filteredMentions = (contracts || []).filter((c) => {
-    const q = (mentionQuery || "").toLowerCase();
-    if (!q) return true;
-    return (
-      (c.title || "").toLowerCase().includes(q) ||
-      (c.documentName || "").toLowerCase().includes(q) ||
-      (c.id || "").toLowerCase().includes(q)
-    );
-  }).slice(0, 8);
+  const filteredMentions = (contracts || [])
+    .filter((c) => {
+      const q = (mentionQuery || "").toLowerCase();
+      if (!q) return true;
+      return (
+        (c.title || "").toLowerCase().includes(q) ||
+        (c.documentName || "").toLowerCase().includes(q) ||
+        (c.id || "").toLowerCase().includes(q)
+      );
+    })
+    .slice(0, 8);
 
   const replaceActiveMention = (text, replacement) => {
-    return text.replace(/(^|\s)@([\w\- _]*)$/, (m, p1) => `${p1}${replacement} `);
+    return text.replace(
+      /(^|\s)@([\w\- _]*)$/,
+      (m, p1) => `${p1}${replacement} `,
+    );
   };
 
   const selectMention = (contract) => {
@@ -560,7 +579,7 @@ export default function GlobalChatPage() {
         `/api/v1/chat/global?conversationId=${encodeURIComponent(id)}`,
         {
           method: "DELETE",
-        }
+        },
       );
       if (!res.ok) {
         throw new Error("Failed to delete conversation");
@@ -580,7 +599,7 @@ export default function GlobalChatPage() {
     }
     const prev = conversations;
     setConversations((cs) =>
-      cs.map((c) => (c.id === id ? { ...c, title: trimmed } : c))
+      cs.map((c) => (c.id === id ? { ...c, title: trimmed } : c)),
     );
     try {
       const res = await fetch("/api/v1/chat/global", {
@@ -599,9 +618,9 @@ export default function GlobalChatPage() {
   };
 
   return (
-    <div className="flex h-full w-full flex-row gap-4 px-4 py-4">
+    <div className="flex flex-row w-full h-full gap-4 px-4 py-4">
       {/* Main Chat Card */}
-      <Card className="flex flex-1 flex-col min-w-0">
+      <Card className="flex flex-col flex-1 min-w-0">
         <CardHeader className="border-b">
           <div className="flex items-center space-x-2">
             <MobileConversationSidebar
@@ -625,9 +644,9 @@ export default function GlobalChatPage() {
               onDeleteClick={(id) => setConfirmId(id)}
             />
 
-            <div className="flex flex-col items-center justify-center text-center gap-2 md:flex-row md:gap-5">
+            <div className="flex flex-col items-center justify-center gap-2 text-center md:flex-row md:gap-5">
               <h3>
-                <Bot className="h-6 w-6 text-blue-600" />
+                <Bot className="w-6 h-6 text-blue-600" />
               </h3>
               <h3 className="font-bold dark:text-white">Global Chat</h3>
               <h3 className="text-sm text-gray-500">
@@ -637,23 +656,28 @@ export default function GlobalChatPage() {
           </div>
         </CardHeader>
 
-        <CardContent className="flex flex-1 flex-col p-0 min-h-96">
+        <CardContent className="flex flex-col flex-1 p-0 min-h-96">
           <ScrollArea
             ref={scrollAreaRef}
             className="flex-1 min-h-0 p-4 mt-5"
             onScrollCapture={(e) => {
               const el = e.currentTarget.querySelector(
-                "[data-radix-scroll-area-viewport]"
+                "[data-radix-scroll-area-viewport]",
               );
               if (!el) return;
-              if (el.scrollTop <= 0 && hasMore && !isLoadingMore && messages.length > 0) {
+              if (
+                el.scrollTop <= 0 &&
+                hasMore &&
+                !isLoadingMore &&
+                messages.length > 0
+              ) {
                 loadMore();
               }
             }}
           >
             {messages.length === 0 ? (
-              <div className="flex h-full flex-col items-center justify-center text-gray-500 mt-5">
-                <Bot className="mb-4 h-12 w-12" />
+              <div className="flex flex-col items-center justify-center h-full mt-5 text-gray-500">
+                <Bot className="w-12 h-12 mb-4" />
                 <h3 className="mb-2 text-lg font-medium">
                   Welcome to Global Chat
                 </h3>
@@ -670,27 +694,33 @@ export default function GlobalChatPage() {
                   </div>
                 )}
                 {messages.map((m, index) => (
-                  <React.Fragment key={`${conversationId || 'new'}-${m.id}`}>
+                  <React.Fragment key={`${conversationId || "new"}-${m.id}`}>
                     <ChatMessage
                       message={m.content}
                       sender={m.role === "assistant" ? "AGENT" : "USER"}
                       timestamp={m.timestamp}
                       isStreaming={m.isStreaming}
+                      status={m.status}
                     />
 
                     {/* Per-message Load More Documents Button - shows after assistant messages with pagination */}
-                    {m.role === "assistant" && m.pagination?.hasMore && !m.isStreaming && !isLoading && !isLoadingMoreDocs && (
-                      <div className="flex justify-center py-4">
-                        <Button
-                          variant="outline"
-                          onClick={() => loadMoreDocuments(m.id)}
-                          className="gap-2"
-                        >
-                          <FileText className="h-4 w-4" />
-                          Load More Documents ({m.pagination.remaining} remaining)
-                        </Button>
-                      </div>
-                    )}
+                    {m.role === "assistant" &&
+                      m.pagination?.hasMore &&
+                      !m.isStreaming &&
+                      !isLoading &&
+                      !isLoadingMoreDocs && (
+                        <div className="flex justify-center py-4">
+                          <Button
+                            variant="outline"
+                            onClick={() => loadMoreDocuments(m.id)}
+                            className="gap-2"
+                          >
+                            <FileText className="w-4 h-4" />
+                            Load More Documents ({m.pagination.remaining}{" "}
+                            remaining)
+                          </Button>
+                        </div>
+                      )}
                   </React.Fragment>
                 ))}
 
@@ -698,26 +728,26 @@ export default function GlobalChatPage() {
                 {isLoadingMoreDocs && (
                   <div className="flex justify-center py-4">
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
+                      <div className="w-4 h-4 border-2 rounded-full animate-spin border-primary border-t-transparent"></div>
                       Loading more documents...
                     </div>
                   </div>
                 )}
               </div>
             )}
-            {isLoading && !messages.some(m => m.isStreaming) && (
+            {isLoading && !messages.some((m) => m.isStreaming) && (
               <div className="flex justify-start p-4 pt-0">
-                <div className="mr-4 rounded-lg bg-gray-100 p-3 text-gray-900 dark:bg-gray-900 dark:text-foreground">
+                <div className="p-3 mr-4 text-gray-900 bg-gray-100 rounded-lg dark:bg-gray-900 dark:text-foreground">
                   <div className="flex items-center space-x-2">
-                    <Bot className="h-5 w-5" />
+                    <Bot className="w-5 h-5" />
                     <div className="flex space-x-1">
-                      <div className="h-2 w-2 animate-bounce rounded-full bg-gray-400"></div>
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
                       <div
-                        className="h-2 w-2 animate-bounce rounded-full bg-gray-400"
+                        className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
                         style={{ animationDelay: "0.1s" }}
                       ></div>
                       <div
-                        className="h-2 w-2 animate-bounce rounded-full bg-gray-400"
+                        className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
                         style={{ animationDelay: "0.2s" }}
                       ></div>
                     </div>
@@ -727,25 +757,37 @@ export default function GlobalChatPage() {
             )}
           </ScrollArea>
 
-          <div className={cn(
-            "w-full transition-all duration-300",
-            messages.length === 0
-              ? "flex-1 flex flex-col items-center justify-center pb-24"
-              : "mt-auto p-4"
-          )}>
-            {messages.length === 0 && (
-              <p className="font-bold dark:text-white text-center mb-4 text-xl">What would you like to find in your documents?</p>
+          <div
+            className={cn(
+              "w-full transition-all duration-300",
+              messages.length === 0
+                ? "flex-1 flex flex-col items-center justify-center pb-24"
+                : "mt-auto p-4",
             )}
-            <div className={cn(
-              "flex items-center space-x-2 mx-auto",
-              messages.length === 0 ? "w-full max-w-2xl" : "max-w-full w-full"
-            )}>
+          >
+            {messages.length === 0 && (
+              <p className="mb-4 text-xl font-bold text-center dark:text-white">
+                What would you like to find in your documents?
+              </p>
+            )}
+            <div
+              className={cn(
+                "flex items-center space-x-2 mx-auto",
+                messages.length === 0
+                  ? "w-full max-w-2xl"
+                  : "max-w-full w-full",
+              )}
+            >
               <div className="relative flex-1">
                 {selectedDoc && (
-                  <div className="absolute -top-7 left-0 flex items-center gap-2 text-xs rounded bg-muted px-2 py-1">
-                    <FileText className="h-3 w-3" />
-                    <span className="truncate max-w-[220px]">{selectedDoc.title} ({selectedDoc.id})</span>
-                    <button className="text-red-500" onClick={clearSelected}>×</button>
+                  <div className="absolute left-0 flex items-center gap-2 px-2 py-1 text-xs rounded -top-7 bg-muted">
+                    <FileText className="w-3 h-3" />
+                    <span className="truncate max-w-[220px]">
+                      {selectedDoc.title} ({selectedDoc.id})
+                    </span>
+                    <button className="text-red-500" onClick={clearSelected}>
+                      ×
+                    </button>
                   </div>
                 )}
                 <Input
@@ -755,11 +797,11 @@ export default function GlobalChatPage() {
                   onKeyDown={handleKeyPress}
                   placeholder="Type @ to target a specific document..."
                   disabled={isLoading}
-                  className="flex-1 h-14 px-5 w-full rounded-full"
+                  className="flex-1 w-full px-5 rounded-full h-14"
                 />
                 {showMention && (
-                  <div className="absolute bottom-10 left-0 z-50 w-full rounded-md border bg-background shadow-md">
-                    <div className="max-h-64 overflow-auto py-1">
+                  <div className="absolute left-0 z-50 w-full border rounded-md shadow-md bottom-10 bg-background">
+                    <div className="py-1 overflow-auto max-h-64">
                       {filteredMentions.length > 0 ? (
                         filteredMentions.map((c, idx) => (
                           <button
@@ -767,13 +809,15 @@ export default function GlobalChatPage() {
                             onClick={() => selectMention(c)}
                             className={cn(
                               "w-full px-3 py-2 text-left hover:bg-accent",
-                              idx === mentionIndex ? "bg-accent" : ""
+                              idx === mentionIndex ? "bg-accent" : "",
                             )}
                           >
                             <div className="flex items-center gap-2">
-                              <FileText className="h-4 w-4" />
-                              <div className="min-w-0 flex-1">
-                                <div className="truncate text-sm font-medium">{c.title || "Untitled"}</div>
+                              <FileText className="w-4 h-4" />
+                              <div className="flex-1 min-w-0">
+                                <div className="text-sm font-medium truncate">
+                                  {c.title || "Untitled"}
+                                </div>
                                 <div className="truncate text-[11px] text-muted-foreground">
                                   {c.documentName || c.id}
                                 </div>
@@ -783,7 +827,9 @@ export default function GlobalChatPage() {
                         ))
                       ) : (
                         <div className="px-3 py-2 text-sm text-muted-foreground">
-                          {contracts.length === 0 ? "No documents available" : "No documents found"}
+                          {contracts.length === 0
+                            ? "No documents available"
+                            : "No documents found"}
                         </div>
                       )}
                     </div>
@@ -795,7 +841,7 @@ export default function GlobalChatPage() {
                 disabled={isLoading || !inputMessage.trim()}
                 size="icon"
               >
-                <Send className="h-4 w-4" />
+                <Send className="w-4 h-4" />
               </Button>
             </div>
           </div>
@@ -840,7 +886,7 @@ export default function GlobalChatPage() {
                 Cancel
               </Button>
               <Button
-                className="w-full bg-red-600 text-white hover:bg-red-700"
+                className="w-full text-white bg-red-600 hover:bg-red-700"
                 onClick={async () => {
                   if (confirmId) {
                     await deleteConversation(confirmId);
@@ -897,7 +943,13 @@ export default function GlobalChatPage() {
   );
 }
 
-function ChatMessage({ message, sender, timestamp, isStreaming = false }) {
+function ChatMessage({
+  message,
+  sender,
+  timestamp,
+  isStreaming = false,
+  status = null,
+}) {
   const [visibleDocuments, setVisibleDocuments] = useState(10);
 
   // Parse document entries for AGENT messages
@@ -906,7 +958,7 @@ function ChatMessage({ message, sender, timestamp, isStreaming = false }) {
   const documents = parsed?.documents || [];
 
   const handleReadMore = () => {
-    setVisibleDocuments(prev => Math.min(prev + 10, documents.length));
+    setVisibleDocuments((prev) => Math.min(prev + 10, documents.length));
   };
 
   const handleReadLess = () => {
@@ -922,12 +974,12 @@ function ChatMessage({ message, sender, timestamp, isStreaming = false }) {
       <div
         className={cn(
           "flex items-start space-x-2",
-          sender === "AGENT" ? "flex-row-reverse" : "flex-row"
+          sender === "AGENT" ? "flex-row-reverse" : "flex-row",
         )}
         style={{ justifyContent: sender === "AGENT" ? "start" : "end" }}
       >
         <div className="p-3 text-sm bg-gray-100 rounded-lg dark:bg-gray-900 text-foreground max-w-[90%]">
-          <div className="document-response prose-sm max-w-none">
+          <div className="prose-sm document-response max-w-none">
             {/* Render header */}
             {parsed.header && (
               <Markdown components={markdownComponents}>
@@ -947,29 +999,23 @@ function ChatMessage({ message, sender, timestamp, isStreaming = false }) {
             {/* View More / View Less buttons */}
             {hasMore && (
               <div className="flex justify-center mt-4">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleReadMore}
-                >
+                <Button variant="outline" size="sm" onClick={handleReadMore}>
                   View More ({documents.length - visibleDocuments} more)
                 </Button>
               </div>
             )}
             {visibleDocuments > 10 && (
               <div className="flex justify-center mt-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleReadLess}
-                >
+                <Button variant="ghost" size="sm" onClick={handleReadLess}>
                   View Less
                 </Button>
               </div>
             )}
           </div>
           {timestamp && (
-            <p className="text-xs opacity-70 mt-1">{new Date(timestamp).toLocaleTimeString()}</p>
+            <p className="mt-1 text-xs opacity-70">
+              {new Date(timestamp).toLocaleTimeString()}
+            </p>
           )}
         </div>
         <Avatar>
@@ -985,21 +1031,64 @@ function ChatMessage({ message, sender, timestamp, isStreaming = false }) {
     <div
       className={cn(
         "flex items-start space-x-2",
-        sender === "AGENT" ? "flex-row-reverse" : "flex-row"
+        sender === "AGENT" ? "flex-row-reverse" : "flex-row",
       )}
       style={{ justifyContent: sender === "AGENT" ? "start" : "end" }}
     >
-      <div className="p-3 text-sm bg-gray-100 rounded-lg dark:bg-gray-900 text-foreground max-w-[90%]">
-        <div className="document-response  prose-sm max-w-none">
-          <Markdown components={markdownComponents}>
-            {message}
-          </Markdown>
-          {isStreaming && (
-            <span className="inline-block w-2 h-4 ml-1 bg-current animate-pulse" />
-          )}
-        </div>
-        {timestamp && !isStreaming && (
-          <p className="text-xs opacity-70 mt-1">{new Date(timestamp).toLocaleTimeString()}</p>
+      <div className="flex flex-col gap-1 max-w-[90%]">
+        {/* Only render bubble if there is a message or if it's NOT streaming (to show empty state if finished empty?) */}
+        {/* Actually, if it's streaming and empty, we rely on the status below. */}
+        {/* If it's finished and empty, we probably shouldn't show it, but that's rare. */}
+        {(message || (!isStreaming && !status)) && (
+          <div className="p-3 text-sm bg-gray-100 rounded-lg dark:bg-gray-900 text-foreground">
+            <div className="prose-sm document-response max-w-none">
+              <Markdown components={markdownComponents}>{message}</Markdown>
+              {isStreaming && !message && !status && (
+                <div className="flex items-center h-4 gap-1">
+                  <span
+                    className="w-2 h-2 bg-current rounded-full animate-bounce"
+                    style={{ animationDelay: "0ms" }}
+                  ></span>
+                  <span
+                    className="w-2 h-2 bg-current rounded-full animate-bounce"
+                    style={{ animationDelay: "150ms" }}
+                  ></span>
+                  <span
+                    className="w-2 h-2 bg-current rounded-full animate-bounce"
+                    style={{ animationDelay: "300ms" }}
+                  ></span>
+                </div>
+              )}
+              {/* Streaming cursor when content is being added */}
+              {isStreaming && message && (
+                <span className="inline-block w-0.5 h-4 ml-0.5 bg-primary animate-pulse" />
+              )}
+            </div>
+            {timestamp && !isStreaming && (
+              <p className="mt-1 text-xs opacity-70">
+                {new Date(timestamp).toLocaleTimeString()}
+              </p>
+            )}
+          </div>
+        )}
+        {isStreaming && status && (
+          <div className="flex items-center gap-2 px-3 py-2 text-xs duration-200 rounded-lg text-muted-foreground bg-muted/50 animate-in fade-in">
+            <div className="flex gap-1">
+              <span
+                className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce"
+                style={{ animationDelay: "0ms" }}
+              ></span>
+              <span
+                className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce"
+                style={{ animationDelay: "150ms" }}
+              ></span>
+              <span
+                className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce"
+                style={{ animationDelay: "300ms" }}
+              ></span>
+            </div>
+            <span className="animate-pulse">{status}</span>
+          </div>
         )}
       </div>
       <Avatar>

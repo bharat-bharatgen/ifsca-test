@@ -67,6 +67,7 @@ services:
       - ./documents-api/.env:/app/.env
     env_file:
       - ./documents-api/.env
+    healthcheck:
       interval: 10s
       timeout: 5s
       retries: 10
