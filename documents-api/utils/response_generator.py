@@ -9,13 +9,26 @@ from typing import Dict, Any, List, Tuple
 import google.generativeai as genai
 from dotenv import load_dotenv
 
+from utils.llm_client import get_llm_client, LLMClient
+
 load_dotenv()
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
 LOGGER = logging.getLogger("documents_api")
 
-# Gemini model name - centralized for easy updates
+# Gemini model name - centralized for easy updates (used as fallback)
 GEMINI_MODEL_NAME = "gemini-2.5-flash"
+
+# Get configurable LLM client for chat (can be Gemini or OpenAI-compatible)
+_response_llm_client: LLMClient = None
+
+
+def get_response_client() -> LLMClient:
+    """Get the LLM client for response generation."""
+    global _response_llm_client
+    if _response_llm_client is None:
+        _response_llm_client = get_llm_client()
+    return _response_llm_client
 
 
 def build_document_context(
@@ -320,45 +333,30 @@ async def stream_response_from_documents(
     try:
         yield "__STATUS__:Generating response...\n"
         
-        # Initialize model with proper async streaming
+        # Get configurable LLM client
+        llm_client = get_response_client()
+        
+        # Initialize with proper async streaming
         generation_config = {
             "temperature": 0.3,
             "top_p": 0.8,
             "top_k": 40,
             "max_output_tokens": 8192,
         }
-        ai_model = genai.GenerativeModel(
-            GEMINI_MODEL_NAME, generation_config=generation_config
-        )
         
-        # Use async generate_content for true streaming
-        response = await ai_model.generate_content_async(prompt, stream=True)
-
         input_tokens = 0
         output_tokens = 0
         chunk_count = 0
 
-        # Use async iteration for proper streaming
-        async for chunk in response:
-            # Extract token usage from the chunk if available
-            if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
-                new_input_tokens = getattr(
-                    chunk.usage_metadata, "prompt_token_count", None
-                )
-                if new_input_tokens is not None:
-                    input_tokens = new_input_tokens
-                new_output_tokens = getattr(
-                    chunk.usage_metadata, "candidates_token_count", None
-                )
-                if new_output_tokens is not None:
-                    output_tokens = new_output_tokens
-
-            # Yield the text chunk immediately for real-time streaming
-            if hasattr(chunk, "text") and chunk.text:
+        # Use the configurable LLM client for streaming
+        async for chunk in llm_client.stream_chat_completion(prompt, **generation_config):
+            if chunk["type"] == "content":
                 chunk_count += 1
-                yield chunk.text
-                # Small yield to ensure chunks are flushed
-                await asyncio.sleep(0)
+                yield chunk["text"]
+                await asyncio.sleep(0)  # Small yield to ensure chunks are flushed
+            elif chunk["type"] == "token_usage":
+                input_tokens = chunk.get("input_tokens", 0)
+                output_tokens = chunk.get("output_tokens", 0)
 
         LOGGER.info(f"✅ Streamed {chunk_count} chunks for query")
 
