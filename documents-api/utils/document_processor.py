@@ -251,6 +251,18 @@ async def process_document_with_gemini(
         file_content = compress_file_if_needed(file_content, mime_type, max_size_mb=30)
         file_part = {"mime_type": mime_type, "data": file_content}
 
+
+        # Extract raw OCR text from the document
+        raw_ocr_text = ""
+        if is_pdf:
+            # For PDFs, extract text using PyPDF2
+            LOGGER.info("[Gemini] Extracting raw text from PDF using PyPDF2")
+            raw_ocr_text = extract_text_from_pdf(file_content)
+            LOGGER.info(f"[Gemini] Extracted {len(raw_ocr_text)} characters from PDF")
+        else:
+            # For images, we'll get the text from Gemini's response
+            LOGGER.info("[Gemini] Will extract OCR text from image via Gemini")
+
         # Build prompt with custom metadata fields if provided
         base_prompt = USER_CONTEXT_PARSE_DOCUMENT
         if metadata_fields:
@@ -286,6 +298,25 @@ async def process_document_with_gemini(
                 "contract_details": {},
                 "contract_summary": "Failed to parse response. Invalid JSON.",
             }
+
+        # For images, extract full OCR text with a separate call
+        if is_image and not raw_ocr_text:
+            try:
+                LOGGER.info("[Gemini] Extracting full OCR text from image")
+                ocr_prompt = "Extract and return ALL text from this image. Include everything you can read, preserving the original structure and formatting as much as possible. Return only the extracted text, no analysis or summary."
+                ocr_response = _call_gemini_for_document(ocr_prompt, file_part)
+                raw_ocr_text = ocr_response.text.strip()
+                LOGGER.info(f"[Gemini] Extracted {len(raw_ocr_text)} characters from image via OCR")
+
+                # Add OCR token usage to the total
+                if hasattr(ocr_response, 'usage_metadata'):
+                    ocr_usage = ocr_response.usage_metadata
+                    input_tokens += ocr_usage.prompt_token_count if ocr_usage else 0
+                    output_tokens += ocr_usage.candidates_token_count if ocr_usage else 0
+            except Exception as ocr_error:
+                LOGGER.warning(f"[Gemini] Failed to extract OCR text from image: {ocr_error}")
+                # Fallback to empty string if OCR extraction fails
+                raw_ocr_text = ""
 
         # Add token usage to result
         result["_token_usage"] = {
@@ -431,6 +462,9 @@ async def process_document_with_gemini(
 
             result["extracted_metadata"] = extracted_metadata
             LOGGER.info(f"[Gemini] Extracted custom metadata fields: {list(extracted_metadata.keys())}")
+             # Add raw OCR text to result
+        result["raw_ocr_text"] = raw_ocr_text
+        LOGGER.info(f"[Gemini] Total raw OCR text length: {len(raw_ocr_text)} characters")
 
         LOGGER.info(
             f"[Gemini] Processed {mime_type} document. "
