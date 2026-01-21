@@ -15,6 +15,7 @@ from fastapi import HTTPException
 from utils.prompts import PROMPTS
 from utils.document_processor import compress_file_if_needed
 from utils.retry_utils import retry_with_backoff
+from utils.llm_client import get_llm_client, LLMClient
 
 LOGGER = logging.getLogger(__name__)
 
@@ -26,6 +27,17 @@ MAX_MENTIONED_DOC_TEXT_LENGTH = 5000  # Reduced for faster processing
 
 # Gemini model name - centralized for easy updates
 GEMINI_MODEL_NAME = "gemini-2.0-flash"  # Fast model with good accuracy
+
+# Get configurable LLM client for chat (can be Gemini or OpenAI-compatible)
+_chat_llm_client: LLMClient = None
+
+
+def get_chat_client() -> LLMClient:
+    """Get the LLM client for chat operations."""
+    global _chat_llm_client
+    if _chat_llm_client is None:
+        _chat_llm_client = get_llm_client()
+    return _chat_llm_client
 
 
 def _is_greeting(text: str) -> bool:
@@ -93,7 +105,7 @@ def _sample_text_for_detection(text: str, max_length: int = 2000) -> str:
 def _is_english(text: str) -> Tuple[bool, int, int]:
     """
     Detect if the text is primarily in English using lightweight checks first,
-    then Gemini API if needed.
+    then the configured LLM provider if needed.
     Returns tuple: (is_english, input_tokens, output_tokens)
     """
     if not text or len(text.strip()) < 10:
@@ -117,17 +129,10 @@ Text: {sampled_text}
 Respond with ONLY "yes" if the text is primarily in English, or "no" if it is in another language.
 Do not include any explanation, just "yes" or "no"."""
 
-        response = _call_gemini_for_language_detection(detection_prompt)
+        # Use configurable LLM client
+        result, input_tokens, output_tokens = _call_llm_for_language_detection(detection_prompt)
 
-        result = (response.text or "").strip().lower()
-        is_english_result = result.startswith("yes")
-
-        # Extract token usage from detection response
-        usage_metadata = (
-            response.usage_metadata if hasattr(response, "usage_metadata") else None
-        )
-        input_tokens = usage_metadata.prompt_token_count if usage_metadata else 0
-        output_tokens = usage_metadata.candidates_token_count if usage_metadata else 0
+        is_english_result = result.strip().lower().startswith("yes")
 
         return is_english_result, input_tokens, output_tokens
     except Exception as e:
@@ -140,6 +145,7 @@ Do not include any explanation, just "yes" or "no"."""
 def _call_gemini_for_language_detection(detection_prompt: str) -> Any:
     """
     Helper function to call Gemini API for language detection with retry logic.
+    (Used when provider is GEMINI)
     """
     model = genai.GenerativeModel(GEMINI_MODEL_NAME)
     response = model.generate_content(
@@ -157,6 +163,7 @@ def _call_gemini_for_language_detection(detection_prompt: str) -> Any:
 def _call_gemini_for_translation(translation_prompt: str) -> Any:
     """
     Helper function to call Gemini API for translation with retry logic.
+    (Used when provider is GEMINI)
     """
     model = genai.GenerativeModel(GEMINI_MODEL_NAME)
     response = model.generate_content(
@@ -174,6 +181,7 @@ def _call_gemini_for_translation(translation_prompt: str) -> Any:
 def _call_gemini_for_chat(prompt_parts: list, generation_config: dict) -> Any:
     """
     Helper function to call Gemini API for chat with retry logic.
+    (Used when provider is GEMINI)
     """
     model = genai.GenerativeModel(
         GEMINI_MODEL_NAME, generation_config=generation_config
@@ -183,9 +191,48 @@ def _call_gemini_for_chat(prompt_parts: list, generation_config: dict) -> Any:
     return response
 
 
+# ============ Configurable LLM Functions (uses DB/env config) ============
+
+@retry_with_backoff(max_retries=3, initial_delay=2.0, max_delay=60.0)
+def _call_llm_for_language_detection(detection_prompt: str) -> Tuple[str, int, int]:
+    """
+    Helper function to call configured LLM for language detection.
+    Works with both Gemini and OpenAI-compatible APIs.
+    Returns: (response_text, input_tokens, output_tokens)
+    """
+    client = get_chat_client()
+    return client.chat_completion(detection_prompt, temperature=0.1, max_tokens=10)
+
+
+@retry_with_backoff(max_retries=3, initial_delay=2.0, max_delay=60.0)
+def _call_llm_for_translation(translation_prompt: str) -> Tuple[str, int, int]:
+    """
+    Helper function to call configured LLM for translation.
+    Works with both Gemini and OpenAI-compatible APIs.
+    Returns: (response_text, input_tokens, output_tokens)
+    """
+    client = get_chat_client()
+    return client.chat_completion(translation_prompt, temperature=0.2, max_tokens=8192)
+
+
+@retry_with_backoff(max_retries=3, initial_delay=2.0, max_delay=60.0)
+def _call_llm_for_chat(prompt: str, generation_config: dict) -> Tuple[str, int, int]:
+    """
+    Helper function to call configured LLM for chat.
+    Works with both Gemini and OpenAI-compatible APIs.
+    Returns: (response_text, input_tokens, output_tokens)
+    """
+    client = get_chat_client()
+    return client.chat_completion(
+        prompt,
+        temperature=generation_config.get("temperature", 0.3),
+        max_tokens=generation_config.get("max_output_tokens", 8192),
+    )
+
+
 def _translate_to_english(text: str) -> Tuple[str, int, int]:
     """
-    Translate text to English using Gemini API.
+    Translate text to English using the configured LLM provider.
     Returns tuple: (translated_text, input_tokens, output_tokens)
     """
     if not text:
@@ -199,21 +246,12 @@ Do not add any explanations or notes, just provide the translated text.
 Text to translate:
 {text}"""
 
-        response = _call_gemini_for_translation(translation_prompt)
+        # Use configurable LLM client
+        translated, trans_input_tokens, trans_output_tokens = _call_llm_for_translation(translation_prompt)
 
-        translated = (response.text or "").strip()
         if not translated:
             LOGGER.warning("Translation returned empty, using original text")
             return text, 0, 0
-
-        # Extract token usage from translation response
-        usage_metadata = (
-            response.usage_metadata if hasattr(response, "usage_metadata") else None
-        )
-        trans_input_tokens = usage_metadata.prompt_token_count if usage_metadata else 0
-        trans_output_tokens = (
-            usage_metadata.candidates_token_count if usage_metadata else 0
-        )
 
         return translated, trans_input_tokens, trans_output_tokens
     except Exception as e:
@@ -691,10 +729,12 @@ async def stream_chat_with_multiple_documents(
     try:
         yield {"type": "status", "message": "Preparing multi-document analysis..."}
 
-        # Limit to 3 documents
-        if len(documents) > 3:
-            LOGGER.warning(f"Received {len(documents)} documents, limiting to 3")
-            documents = documents[:3]
+        # Limit documents based on context window constraints
+        # Increase this if your model supports larger context
+        MAX_DOCS = 10
+        if len(documents) > MAX_DOCS:
+            LOGGER.warning(f"Received {len(documents)} documents, limiting to {MAX_DOCS}")
+            documents = documents[:MAX_DOCS]
 
         if not documents:
             yield {"type": "content", "text": "No documents provided. Please provide at least one document to analyze."}
@@ -708,22 +748,19 @@ async def stream_chat_with_multiple_documents(
             "max_output_tokens": 8192,
         }
 
-        model = genai.GenerativeModel(
-            GEMINI_MODEL_NAME, generation_config=generation_config
-        )
-
         yield {"type": "status", "message": f"Processing {len(documents)} document(s)..."}
 
-        # Build context for all documents (fast, no I/O)
+        # Build context for all documents using extracted text (no file downloads needed)
         documents_context_parts = []
-        docs_with_urls = []  # Track docs that need file download
 
         for i, doc in enumerate(documents, 1):
             doc_id = doc.get("document_id", f"doc_{i}")
             doc_text = doc.get("document_text", "")
             doc_metadata = doc.get("metadata", {})
-            doc_url = doc.get("document_url")
             doc_title = doc_metadata.get("title") or f"Untitled Document {i}"
+
+            # Log document text length for debugging
+            LOGGER.info(f"📄 Doc {i} '{doc_title}': text length = {len(doc_text)} chars")
 
             # Build document section - use title instead of numbered reference
             doc_section = f"""
@@ -739,72 +776,30 @@ Document Metadata:
 """
             documents_context_parts.append(doc_section)
 
-            # Track docs with URLs for parallel download
-            if doc_url:
-                docs_with_urls.append((i, doc_title, doc_url))
-
         documents_context = "\n".join(documents_context_parts)
-
-        # Download and upload files in PARALLEL (major latency reduction)
-        # Check if PDF attachments should be skipped for performance
-        skip_pdf = os.getenv("SKIP_PDF_ATTACHMENTS", "false").lower() == "true"
-
-        uploaded_files = []
-        if docs_with_urls and not skip_pdf:
-            yield {"type": "status", "message": f"Downloading {len(docs_with_urls)} file(s) in parallel..."}
-            
-            async def download_and_upload(doc_num, doc_title, doc_url):
-                """Download and upload a single file."""
-                try:
-                    resp = await asyncio.to_thread(requests.get, doc_url, timeout=30)
-                    resp.raise_for_status()
-                    file_content = resp.content
-
-                    is_pdf = file_content.startswith(b"%PDF")
-                    img_type = imghdr.what(None, h=file_content)
-                    is_image = img_type is not None
-
-                    if is_pdf:
-                        mime_type = "application/pdf"
-                    elif is_image:
-                        mime_type = f"image/{img_type}"
-                    else:
-                        return None  # Unsupported file type
-
-                    file_content = compress_file_if_needed(file_content, mime_type)
-                    # Upload in thread to not block
-                    uploaded = await asyncio.to_thread(
-                        genai.upload_file, io.BytesIO(file_content), mime_type=mime_type
-                    )
-                    return (doc_num, doc_title, uploaded)
-                except Exception as e:
-                    LOGGER.warning(f"Could not attach document {doc_num} file to prompt: {e}")
-                    return None
-
-            # Run all downloads/uploads in parallel
-            results = await asyncio.gather(
-                *[download_and_upload(num, title, url) for num, title, url in docs_with_urls],
-                return_exceptions=True
-            )
-            
-            # Collect successful uploads
-            for result in results:
-                if result and not isinstance(result, Exception):
-                    uploaded_files.append(result)
-            
-            if uploaded_files:
-                yield {"type": "status", "message": f"Attached {len(uploaded_files)} file(s)..."}
 
         yield {"type": "status", "message": "Building AI prompt..."}
 
-        prompt = PROMPTS.get_prompt("chat_with_multiple_documents").format(
-            query=query,
-            documents_context=documents_context,
-        )
-
-        # If prompt template not found, use a fallback
-        if not prompt or prompt == query:
-            prompt = f"""You are OutRiskAI's legal document assistant.
+        # Load and parse the YAML prompt
+        import yaml
+        prompt_yaml = PROMPTS.get_prompt("chat_with_multiple_documents")
+        try:
+            prompt_data = yaml.safe_load(prompt_yaml)
+            system_prompt = prompt_data.get("system", "").strip()
+            user_template = prompt_data.get("user", "").strip()
+            instructions = prompt_data.get("instructions", "").strip()
+            
+            # Format the user section with actual data
+            user_prompt = user_template.format(
+                query=query,
+                documents_context=documents_context
+            )
+            
+            # Combine all sections
+            prompt = f"{system_prompt}\n\n{user_prompt}\n\n{instructions}"
+        except Exception as e:
+            LOGGER.warning(f"Failed to parse YAML prompt, using fallback: {e}")
+            prompt = f"""You are a legal document assistant.
 Analyze the following documents and answer the user's query precisely.
 
 User Query: {query}
@@ -815,44 +810,34 @@ Instructions:
 - Answer only what's asked
 - Be concise, use clear markdown
 - Always specify which document you're referring to when citing information
-- Compare and contrast information across documents when relevant
 """
 
-        prompt_parts = [prompt]
-
-        # Add uploaded files to prompt
-        for doc_num, doc_title, uploaded_file in uploaded_files:
-            prompt_parts.append(
-                f"\n[Attached file for Document {doc_num}: {doc_title}]"
-            )
-            prompt_parts.append(uploaded_file)
+        # Log prompt length to debug if context is being passed
+        LOGGER.info(f"📝 Built prompt with {len(prompt)} chars, documents_context has {len(documents_context)} chars")
 
         yield {"type": "status", "message": "Generating response..."}
 
-        # Stream response asynchronously
-        response = await model.generate_content_async(prompt_parts, stream=True)
+        # Use configurable LLM client (Gemini or OpenAI-compatible)
+        llm_client = get_chat_client()
+        LOGGER.info(f"🤖 Using {llm_client.provider} (model={llm_client.model_name}) for multi-doc chat with {len(documents)} document(s)")
 
         input_tokens = 0
         output_tokens = 0
         chunk_count = 0
         total_chars = 0
 
-        async for chunk in response:
-            # Track tokens if available
-            if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
-                input_tokens = chunk.usage_metadata.prompt_token_count or input_tokens
-                output_tokens = (
-                    chunk.usage_metadata.candidates_token_count or output_tokens
-                )
-
-            if chunk.text:
+        # Stream response using the configurable LLM client
+        async for chunk in llm_client.stream_chat_completion(prompt, **generation_config):
+            if chunk["type"] == "content":
                 chunk_count += 1
-                chunk_len = len(chunk.text)
+                chunk_len = len(chunk["text"])
                 total_chars += chunk_len
                 LOGGER.debug(f"📝 Chunk {chunk_count}: {chunk_len} chars")
-                yield {"type": "content", "text": chunk.text}
-                # Ensure chunk is flushed immediately for real-time streaming
+                yield {"type": "content", "text": chunk["text"]}
                 await asyncio.sleep(0)
+            elif chunk["type"] == "token_usage":
+                input_tokens = chunk.get("input_tokens", 0)
+                output_tokens = chunk.get("output_tokens", 0)
 
         LOGGER.info(f"✅ Streamed {chunk_count} chunks ({total_chars} total chars) for multi-document chat")
 
