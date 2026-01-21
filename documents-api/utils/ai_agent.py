@@ -22,10 +22,10 @@ load_dotenv()
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"), transport="rest")
 
 # Maximum number of characters to include from each mentioned document's text
-MAX_MENTIONED_DOC_TEXT_LENGTH = 5000
+MAX_MENTIONED_DOC_TEXT_LENGTH = 5000  # Reduced for faster processing
 
 # Gemini model name - centralized for easy updates
-GEMINI_MODEL_NAME = "gemini-2.5-flash"
+GEMINI_MODEL_NAME = "gemini-2.0-flash"  # Fast model with good accuracy
 
 
 def _is_greeting(text: str) -> bool:
@@ -746,8 +746,11 @@ Document Metadata:
         documents_context = "\n".join(documents_context_parts)
 
         # Download and upload files in PARALLEL (major latency reduction)
+        # Check if PDF attachments should be skipped for performance
+        skip_pdf = os.getenv("SKIP_PDF_ATTACHMENTS", "false").lower() == "true"
+
         uploaded_files = []
-        if docs_with_urls:
+        if docs_with_urls and not skip_pdf:
             yield {"type": "status", "message": f"Downloading {len(docs_with_urls)} file(s) in parallel..."}
             
             async def download_and_upload(doc_num, doc_title, doc_url):
