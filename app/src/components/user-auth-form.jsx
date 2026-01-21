@@ -169,10 +169,10 @@ export const UserAuthForm = ({ className, formType, onSuccess, ...props }) => {
         // For registration, redirect usage account to /usage, others to verify-otp
         window.location.href = isUsageAccount ? USAGE_PAGE_PATH : "/verify-otp";
       } else {
-        // For login, redirect usage account to /usage, others to callback URL or /ui-dashboard
+        // For login, redirect usage account to /usage, others to callback URL or /global-chat
         window.location.href = isUsageAccount 
           ? USAGE_PAGE_PATH 
-          : (searchParams?.get("from") || "/ui-dashboard");
+          : (searchParams?.get("from") || "/global-chat");
       }
     }
 
@@ -259,7 +259,7 @@ export const UserAuthForm = ({ className, formType, onSuccess, ...props }) => {
           return;
         }
 
-        const redirectUrl = searchParams?.get("from") || "/ui-dashboard";
+        const redirectUrl = searchParams?.get("from") || "/global-chat";
         router.push(redirectUrl);
         return;
       }
@@ -409,7 +409,7 @@ export const UserAuthForm = ({ className, formType, onSuccess, ...props }) => {
           setIsGoogleLoading(true);
             try {
             await signIn("google", {
-              callbackUrl: searchParams?.get("from") || "/ui-dashboard",
+              callbackUrl: searchParams?.get("from") || "/global-chat",
             });
           } catch (error) {
             setIsLoading(false);

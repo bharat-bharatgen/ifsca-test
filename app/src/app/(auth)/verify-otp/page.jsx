@@ -42,7 +42,7 @@ export default function VerifyOTPPage() {
       const updatedSession = await getSession();
       setSession(updatedSession);
       toast({ title: "Verified", description: "Email verified successfully" });
-      window.location.href = "/ui-dashboard";
+      window.location.href = "/global-chat";
     } catch (e) {
       console.error("[verify-otp] error:", e?.response?.data || e?.message);
       const message = e?.response?.data?.error || "Verification failed";

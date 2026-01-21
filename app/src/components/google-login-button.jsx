@@ -14,7 +14,7 @@ export function GoogleLoginButton() {
       setIsLoading(true);
       const from = searchParams.get("from");
       await signIn("google", {
-        callbackUrl: from || "/ui-dashboard"
+        callbackUrl: from || "/global-chat"
       });
     } catch (error) {
       console.error("Google login error:", error);

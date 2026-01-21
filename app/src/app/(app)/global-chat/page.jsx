@@ -1,11 +1,12 @@
 "use client";
 
+import Image from "next/image";
 import React, { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, Bot, FileText } from "lucide-react";
+import { Send, FileText } from "lucide-react";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import Markdown from "react-markdown";
@@ -406,11 +407,11 @@ export default function GlobalChatPage() {
             prev.map((msg) =>
               msg.id === assistantMessageId
                 ? {
-                    ...msg,
-                    isStreaming: false,
-                    pagination: newPaginationData,
-                    status: null,
-                  }
+                  ...msg,
+                  isStreaming: false,
+                  pagination: newPaginationData,
+                  status: null,
+                }
                 : msg,
             ),
           );
@@ -452,10 +453,10 @@ export default function GlobalChatPage() {
         prev.map((msg) =>
           msg.id === assistantMessageId
             ? {
-                ...msg,
-                content: "Sorry, I encountered an error. Please try again.",
-                isStreaming: false,
-              }
+              ...msg,
+              content: "Sorry, I encountered an error. Please try again.",
+              isStreaming: false,
+            }
             : msg,
         ),
       );
@@ -646,7 +647,7 @@ export default function GlobalChatPage() {
 
             <div className="flex flex-col items-center justify-center gap-2 text-center md:flex-row md:gap-5">
               <h3>
-                <Bot className="w-6 h-6 text-blue-600" />
+                <Image src="/assets/bharatGen-logo.png" alt="BharatGen" width={96} height={46} />
               </h3>
               <h3 className="font-bold dark:text-white">Global Chat</h3>
               <h3 className="text-sm text-gray-500">
@@ -677,7 +678,7 @@ export default function GlobalChatPage() {
           >
             {messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full mt-5 text-gray-500">
-                <Bot className="w-12 h-12 mb-4" />
+                <Image src="/assets/bharatGen-logo.png" alt="BharatGen" width={92} height={46} className="mb-4" />
                 <h3 className="mb-2 text-lg font-medium">
                   Welcome to Global Chat
                 </h3>
@@ -739,7 +740,7 @@ export default function GlobalChatPage() {
               <div className="flex justify-start p-4 pt-0">
                 <div className="p-3 mr-4 text-gray-900 bg-gray-100 rounded-lg dark:bg-gray-900 dark:text-foreground">
                   <div className="flex items-center space-x-2">
-                    <Bot className="w-5 h-5" />
+                    <Image src="/assets/bharatGen-logo.png" alt="BharatGen" width={58} height={58} />
                     <div className="flex space-x-1">
                       <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
                       <div

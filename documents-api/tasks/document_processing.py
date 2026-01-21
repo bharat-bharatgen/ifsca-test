@@ -81,14 +81,22 @@ def _extract_document_info_impl(document_url: str, user_name: str) -> Dict[str, 
     # Extract token usage
     token_usage = result.pop("_token_usage", {"input_tokens": 0, "output_tokens": 0})
     
-    # Extract text content
-    content_parts = []
-    if result.get("contract_summary"):
-        content_parts.append(result["contract_summary"])
-    details = result.get("contract_details", {})
-    if details.get("description"):
-        content_parts.append(details["description"])
-    content = "\n\n".join(content_parts) if content_parts else ""
+     # Extract full OCR text content as primary content
+    # This is the actual complete text from the document
+    content = result.get("raw_ocr_text", "")
+
+    # Fallback to AI summaries only if raw OCR text is not available or too short
+    if not content or len(content.strip()) < 100:
+        LOGGER.warning("[EXTRACT] Raw OCR text is missing or too short, falling back to AI summaries")
+        content_parts = []
+        if result.get("contract_summary"):
+            content_parts.append(result["contract_summary"])
+        details = result.get("contract_details", {})
+        if details.get("description"):
+            content_parts.append(details["description"])
+        content = "\n\n".join(content_parts) if content_parts else ""
+    else:
+        LOGGER.info(f"[EXTRACT] Using full raw OCR text ({len(content)} characters)")
     
     return {
         "content": content,

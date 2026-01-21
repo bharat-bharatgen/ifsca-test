@@ -115,10 +115,10 @@ export default async function proxy(req) {
 
   // Check if trying to access /usage page
   const isUsagePage = pathname === "/usage" || pathname.startsWith("/usage/");
-  
+
   // Restrict /usage page to usage account only - redirect others to dashboard
   if (isUsagePage && isAuth && !isUsageAccount) {
-    return NextResponse.redirect(new URL("/ui-dashboard", req.url));
+    return NextResponse.redirect(new URL("/global-chat", req.url));
   }
 
   // If accessing /usage page and user is usage account, allow access (even if not verified)
@@ -153,7 +153,7 @@ export default async function proxy(req) {
   if (isAuth && userRole === "global-chat") {
     const allowedPaths = ["/global-chat", "/api/v1/chat/global", "/api/v1/chat/history", "/api/auth"];
     const isAllowedPath = allowedPaths.some(path => pathname.startsWith(path));
-    
+
     if (!isAllowedPath) {
       return NextResponse.redirect(new URL("/global-chat", req.url));
     }
