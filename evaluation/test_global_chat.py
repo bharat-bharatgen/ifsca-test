@@ -488,6 +488,73 @@ def process_file(
         if processed_count < questions_to_process:  # Don't delay after last question
             time.sleep(delay_seconds)
     
+    # Calculate summary statistics for both CSV and console
+    successful_responses = df[
+        (df[actual_col].notna()) & 
+        (df[actual_col].astype(str).str.len() > 0) &
+        (~df[actual_col].astype(str).str.startswith('ERROR:'))
+    ]
+    evaluated_responses = df[df['eval_score'] > 0]
+    
+    summary_stats = []
+    summary_stats.append(f"Total Questions: {len(df)}")
+    summary_stats.append(f"Processed Questions: {processed_count}")
+    summary_stats.append(f"Successful Responses: {len(successful_responses)}")
+    summary_stats.append(f"Evaluated Responses: {len(evaluated_responses)}")
+    
+    if len(successful_responses) > 0:
+        avg_latency = successful_responses['latency'].mean()
+        summary_stats.append(f"Average Latency: {avg_latency:.2f}s")
+    else:
+        summary_stats.append("Average Latency: N/A")
+        
+    summary_stats.append("")  # Empty line
+    
+    if len(evaluated_responses) > 0:
+        avg_score = evaluated_responses['eval_score'].mean()
+        max_score = evaluated_responses['eval_score'].max()
+        min_score = evaluated_responses['eval_score'].min()
+        
+        summary_stats.append(f"Average Score: {avg_score:.1f}/100")
+        summary_stats.append(f"Highest Score: {max_score:.1f}/100")
+        summary_stats.append(f"Lowest Score: {min_score:.1f}/100")
+        
+        summary_stats.append("")  # Empty line
+        
+        # Score distribution
+        fully_correct = len(evaluated_responses[evaluated_responses['eval_score'] == 100])
+        excellent = len(evaluated_responses[evaluated_responses['eval_score'] >= 80])
+        good = len(evaluated_responses[(evaluated_responses['eval_score'] >= 60) & (evaluated_responses['eval_score'] < 80)])
+        fair = len(evaluated_responses[(evaluated_responses['eval_score'] >= 40) & (evaluated_responses['eval_score'] < 60)])
+        poor = len(evaluated_responses[evaluated_responses['eval_score'] < 40])
+        
+        summary_stats.append("Score Distribution:")
+        summary_stats.append(f"- Fully Correct (100): {fully_correct}")
+        summary_stats.append(f"- Excellent (80-100): {excellent}")
+        summary_stats.append(f"- Good (60-79): {good}")
+        summary_stats.append(f"- Fair (40-59): {fair}")
+        summary_stats.append(f"- Poor (0-39): {poor}")
+    else:
+        summary_stats.append("Average Score: N/A")
+        summary_stats.append("Highest Score: N/A")
+        summary_stats.append("Lowest Score: N/A")
+
+    # Prepare the summary column
+    # Ensure DataFrame has enough rows for the summary
+    if len(df) < len(summary_stats):
+        # Add empty rows to df
+        extra_rows = len(summary_stats) - len(df)
+        empty_rows = pd.DataFrame([{col: "" for col in df.columns} for _ in range(extra_rows)])
+        df = pd.concat([df, empty_rows], ignore_index=True)
+    
+    # Create the column data
+    summary_column_data = [""] * len(df)
+    for i, stat in enumerate(summary_stats):
+        summary_column_data[i] = stat
+        
+    # Insert the column at the beginning (index 0)
+    df.insert(0, 'SUMMARY STATISTICS', summary_column_data)
+    
     # Save results
     if not output_path:
         # Default to output.csv in the same directory as input file
@@ -513,24 +580,15 @@ def process_file(
     
     print_status(f"✅ Results saved successfully!", "success")
     
-    # Print summary statistics
+    # Print summary statistics to console
     print_status("\n" + "=" * 60, "header")
     print_status("📈 SUMMARY STATISTICS", "header")
     
-    # Filter for successful responses (handle both string and error messages)
-    successful_responses = df[
-        (df[actual_col].notna()) & 
-        (df[actual_col].astype(str).str.len() > 0) &
-        (~df[actual_col].astype(str).str.startswith('ERROR:'))
-    ]
-    evaluated_responses = df[df['eval_score'] > 0]
-    
-    print(f"\n   Total Questions:        {len(df)}")
+    print(f"\n   Total Questions:        {total_questions}")
     print(f"   Processed Questions:    {processed_count}")
     print(f"   Successful Responses:   {len(successful_responses)}")
     print(f"   Evaluated Responses:    {len(evaluated_responses)}")
     
-    # Show average latency
     if len(successful_responses) > 0:
         avg_latency = successful_responses['latency'].mean()
         print(f"   Average Latency:        {avg_latency:.2f}s")
@@ -545,12 +603,14 @@ def process_file(
         print(f"   Lowest Score:           {min_score:.1f}/100")
         
         # Score distribution
+        fully_correct = len(evaluated_responses[evaluated_responses['eval_score'] == 100])
         excellent = len(evaluated_responses[evaluated_responses['eval_score'] >= 80])
         good = len(evaluated_responses[(evaluated_responses['eval_score'] >= 60) & (evaluated_responses['eval_score'] < 80)])
         fair = len(evaluated_responses[(evaluated_responses['eval_score'] >= 40) & (evaluated_responses['eval_score'] < 60)])
         poor = len(evaluated_responses[evaluated_responses['eval_score'] < 40])
         
         print(f"\n   Score Distribution:")
+        print(f"   - Fully Correct (100):  {fully_correct}")
         print(f"   - Excellent (80-100):   {excellent}")
         print(f"   - Good (60-79):         {good}")
         print(f"   - Fair (40-59):         {fair}")
