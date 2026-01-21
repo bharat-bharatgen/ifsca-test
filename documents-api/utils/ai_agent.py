@@ -23,10 +23,10 @@ load_dotenv()
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"), transport="rest")
 
 # Maximum number of characters to include from each mentioned document's text
-MAX_MENTIONED_DOC_TEXT_LENGTH = 5000
+MAX_MENTIONED_DOC_TEXT_LENGTH = 5000  # Reduced for faster processing
 
-# Gemini model name - centralized for easy updates (used for document processing)
-GEMINI_MODEL_NAME = "gemini-2.5-flash"
+# Gemini model name - centralized for easy updates
+GEMINI_MODEL_NAME = "gemini-2.0-flash"  # Fast model with good accuracy
 
 # Get configurable LLM client for chat (can be Gemini or OpenAI-compatible)
 _chat_llm_client: LLMClient = None

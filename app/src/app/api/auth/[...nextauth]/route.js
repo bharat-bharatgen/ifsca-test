@@ -70,7 +70,7 @@ const handler = NextAuth({
           const existingByName = await prisma.role.findFirst({ where: { name: "user" } });
           role = existingByName || (await prisma.role.create({ data: { id: 1, name: "user" } }));
         }
-        
+
         // Create or update user (emailVerified will be set by seed file for usage account)
         const hashed = await hash(password, 10);
         let user;
@@ -83,7 +83,7 @@ const handler = NextAuth({
           user = await prisma.user.create({
             data: { name, email, password: hashed, emailVerified: null, roleId: role.id },
           });
-          
+
           // Create organization for new user and make them admin
           try {
             await createOrganizationForUser(user, name ? `${name}'s Organization` : undefined);
@@ -92,7 +92,7 @@ const handler = NextAuth({
             // Don't fail registration if org creation fails
           }
         }
-        
+
         // Generate and send OTP for verification
         const otpCode = generateOTP();
         const expires = new Date(Date.now() + 10 * 60 * 1000);
@@ -104,7 +104,7 @@ const handler = NextAuth({
         } catch (error) {
           console.error("[otp] Failed to send email:", error);
         }
-        
+
         return { id: user.id, email, name, emailVerified: user.emailVerified };
       },
     }),
@@ -170,56 +170,56 @@ const handler = NextAuth({
   ],
   callbacks: {
     async redirect({ url, baseUrl }) {
-     
+
       if (typeof url === "string" && url.startsWith(baseUrl)) {
         return url;
       }
-      return `${baseUrl}/ui-dashboard`;
+      return `${baseUrl}/global-chat`;
     },
     async jwt({ token, user, account, profile }) {
       // Handle Google Sign In
-    if (account?.provider === "google") {
-      const randomPassword = await hash(crypto.randomBytes(32).toString('hex'), 10);
-      
-      // Check if user already exists
-      const existingUser = await prisma.user.findUnique({
-        where: { email: profile.email },
-        include: { organization: true },
-      });
-      
-      const googleUser = await prisma.user.upsert({
-        where: { email: profile.email },
-        update: {
-          name: profile.name,
-          emailVerified: new Date(),
-          image: profile.picture
-        },
-        create: {
-          email: profile.email,
-          name: profile.name,
-          emailVerified: new Date(),
-          image: profile.picture,
-          password: randomPassword
+      if (account?.provider === "google") {
+        const randomPassword = await hash(crypto.randomBytes(32).toString('hex'), 10);
+
+        // Check if user already exists
+        const existingUser = await prisma.user.findUnique({
+          where: { email: profile.email },
+          include: { organization: true },
+        });
+
+        const googleUser = await prisma.user.upsert({
+          where: { email: profile.email },
+          update: {
+            name: profile.name,
+            emailVerified: new Date(),
+            image: profile.picture
+          },
+          create: {
+            email: profile.email,
+            name: profile.name,
+            emailVerified: new Date(),
+            image: profile.picture,
+            password: randomPassword
+          }
+        });
+
+        // Create organization for new Google users
+        if (!existingUser) {
+          try {
+            await createOrganizationForUser(googleUser, profile.name ? `${profile.name}'s Organization` : undefined);
+          } catch (orgError) {
+            console.error("[google-auth] Failed to create organization:", orgError);
+          }
         }
-      });
-      
-      // Create organization for new Google users
-      if (!existingUser) {
-        try {
-          await createOrganizationForUser(googleUser, profile.name ? `${profile.name}'s Organization` : undefined);
-        } catch (orgError) {
-          console.error("[google-auth] Failed to create organization:", orgError);
-        }
+
+        token.id = googleUser.id;
+        token.email = googleUser.email;
+        token.name = googleUser.name;
+        token.emailVerified = true;
+        token.google = true;
+        return token;
       }
-      
-      token.id = googleUser.id;
-      token.email = googleUser.email;
-      token.name = googleUser.name;
-      token.emailVerified = true;
-      token.google = true;
-      return token;
-    }
-      
+
       // Handle regular sign in
       if (user) {
         token.id = user.id;
@@ -229,13 +229,13 @@ const handler = NextAuth({
         token.pendingRegistration = !user.emailVerified;
         return token;
       }
-      
+
       try {
         let dbUser = null;
         if (token?.id && typeof token.id === "string") {
-          dbUser = await prisma.user.findUnique({ 
+          dbUser = await prisma.user.findUnique({
             where: { id: token.id },
-            include: { 
+            include: {
               organizationMembers: {
                 select: { role: true, organizationId: true }
               }
@@ -243,9 +243,9 @@ const handler = NextAuth({
           });
         }
         if (!dbUser && token?.email) {
-          dbUser = await prisma.user.findUnique({ 
+          dbUser = await prisma.user.findUnique({
             where: { email: token.email },
-            include: { 
+            include: {
               organizationMembers: {
                 select: { role: true, organizationId: true }
               }
