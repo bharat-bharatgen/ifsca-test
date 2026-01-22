@@ -27,7 +27,7 @@ const HeaderComponent = () => {
   const isGuest = session?.user?.isGuest;
   const isLawyer = session?.user?.role?.name === "lawyer";
   const isGlobalChatUser = session?.user?.role?.name === "global-chat";
-  
+
   // Avoid forcing session refresh loops; rely on initial session
 
   useEffect(() => {
@@ -67,7 +67,7 @@ const HeaderComponent = () => {
               className="md:hidden"
               onClick={() => setIsOpen(true)}
             >
-             <MenuIcon className="w-6 h-6" />
+              <MenuIcon className="w-6 h-6" />
             </Button>}
           </div>
         </SheetTrigger>
@@ -118,7 +118,7 @@ const HeaderComponent = () => {
                     prefetch={false}
                     onClick={() => setIsOpen(false)}
                   >
-                  <ReceiptText className="w-4 h-4" />
+                    <ReceiptText className="w-4 h-4" />
                     Documents
                   </Link>
                   {/* {!isLawyer && (
@@ -215,6 +215,6 @@ const HeaderComponent = () => {
 
 export const AppHeader = () => {
   return (
-      <HeaderComponent />
+    <HeaderComponent />
   );
 };

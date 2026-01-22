@@ -407,11 +407,11 @@ export default function GlobalChatPage() {
             prev.map((msg) =>
               msg.id === assistantMessageId
                 ? {
-                    ...msg,
-                    isStreaming: false,
-                    pagination: newPaginationData,
-                    status: null,
-                  }
+                  ...msg,
+                  isStreaming: false,
+                  pagination: newPaginationData,
+                  status: null,
+                }
                 : msg,
             ),
           );
@@ -453,10 +453,10 @@ export default function GlobalChatPage() {
         prev.map((msg) =>
           msg.id === assistantMessageId
             ? {
-                ...msg,
-                content: "Sorry, I encountered an error. Please try again.",
-                isStreaming: false,
-              }
+              ...msg,
+              content: "Sorry, I encountered an error. Please try again.",
+              isStreaming: false,
+            }
             : msg,
         ),
       );
@@ -1023,7 +1023,6 @@ function ChatMessage({
           )}
         </div>
         <Avatar>
-          <AvatarImage src={sender === "AGENT" ? "/icon.png" : undefined} />
           <AvatarFallback>{sender === "AGENT" ? "AI" : "U"}</AvatarFallback>
         </Avatar>
       </div>
@@ -1096,7 +1095,6 @@ function ChatMessage({
         )}
       </div>
       <Avatar>
-        <AvatarImage src={sender === "AGENT" ? "/icon.png" : undefined} />
         <AvatarFallback>{sender === "AGENT" ? "AI" : "U"}</AvatarFallback>
       </Avatar>
     </div>
