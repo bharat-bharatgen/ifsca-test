@@ -7,6 +7,7 @@ Configuration is read from the database (llm_config table).
 import json
 import logging
 import os
+import asyncio
 from typing import Dict, Any, Optional, AsyncIterator, Tuple
 
 import requests
@@ -192,18 +193,40 @@ class LLMClient:
                 }
             )
             
-            response = await model.generate_content_async(prompt, stream=True)
-            
             input_tokens = 0
             output_tokens = 0
 
-            async for chunk in response:
+            loop = asyncio.get_running_loop()
+            queue: asyncio.Queue = asyncio.Queue()
+
+            def producer():
+                try:
+                    response = model.generate_content(prompt, stream=True)
+                    for chunk in response:
+                        asyncio.run_coroutine_threadsafe(queue.put(chunk), loop)
+                except Exception as exc:
+                    asyncio.run_coroutine_threadsafe(queue.put(exc), loop)
+                finally:
+                    asyncio.run_coroutine_threadsafe(queue.put(None), loop)
+
+            producer_task = asyncio.create_task(asyncio.to_thread(producer))
+
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                if isinstance(item, Exception):
+                    raise item
+
+                chunk = item
                 if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
                     input_tokens = chunk.usage_metadata.prompt_token_count or input_tokens
                     output_tokens = chunk.usage_metadata.candidates_token_count or output_tokens
 
                 if hasattr(chunk, "text") and chunk.text:
                     yield {"type": "content", "text": chunk.text}
+
+            await producer_task
 
             yield {"type": "token_usage", "input_tokens": input_tokens, "output_tokens": output_tokens}
         except Exception as e:

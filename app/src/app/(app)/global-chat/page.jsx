@@ -407,11 +407,11 @@ export default function GlobalChatPage() {
             prev.map((msg) =>
               msg.id === assistantMessageId
                 ? {
-                  ...msg,
-                  isStreaming: false,
-                  pagination: newPaginationData,
-                  status: null,
-                }
+                    ...msg,
+                    isStreaming: false,
+                    pagination: newPaginationData,
+                    status: null,
+                  }
                 : msg,
             ),
           );
@@ -453,10 +453,10 @@ export default function GlobalChatPage() {
         prev.map((msg) =>
           msg.id === assistantMessageId
             ? {
-              ...msg,
-              content: "Sorry, I encountered an error. Please try again.",
-              isStreaming: false,
-            }
+                ...msg,
+                content: "Sorry, I encountered an error. Please try again.",
+                isStreaming: false,
+              }
             : msg,
         ),
       );
@@ -646,13 +646,12 @@ export default function GlobalChatPage() {
             />
 
             <div className="flex flex-col items-center justify-center gap-2 text-center md:flex-row md:gap-5">
-              <h3>
-                <Image src="/assets/bharatGen-logo.png" alt="BharatGen" width={96} height={46} />
-              </h3>
-              <h3 className="font-bold dark:text-white">Global Chat</h3>
-              <h3 className="text-sm text-gray-500">
-                Chat with AI across all your documents
-              </h3>
+              <Image
+                src="/assets/bharatGen-logo.png"
+                alt="BharatGen"
+                width={96}
+                height={46}
+              />
             </div>
           </div>
         </CardHeader>
@@ -678,14 +677,13 @@ export default function GlobalChatPage() {
           >
             {messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full mt-5 text-gray-500">
-                <Image src="/assets/bharatGen-logo.png" alt="BharatGen" width={92} height={46} className="mb-4" />
-                <h3 className="mb-2 text-lg font-medium">
-                  Welcome to Global Chat
-                </h3>
-                <p className="max-w-md text-center">
-                  Ask me anything about your documents. I can search across all
-                  your uploaded documents and provide relevant information.
-                </p>
+                <Image
+                  src="/assets/bharatGen-logo.png"
+                  alt="BharatGen"
+                  width={92}
+                  height={46}
+                  className="mb-4"
+                />
               </div>
             ) : (
               <div className="space-y-4">
@@ -740,7 +738,12 @@ export default function GlobalChatPage() {
               <div className="flex justify-start p-4 pt-0">
                 <div className="p-3 mr-4 text-gray-900 bg-gray-100 rounded-lg dark:bg-gray-900 dark:text-foreground">
                   <div className="flex items-center space-x-2">
-                    <Image src="/assets/bharatGen-logo.png" alt="BharatGen" width={58} height={58} />
+                    <Image
+                      src="/assets/bharatGen-logo.png"
+                      alt="BharatGen"
+                      width={58}
+                      height={58}
+                    />
                     <div className="flex space-x-1">
                       <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
                       <div
@@ -767,7 +770,7 @@ export default function GlobalChatPage() {
             )}
           >
             {messages.length === 0 && (
-              <p className="mb-4 text-xl font-bold text-center dark:text-white">
+              <p className="mb-4 text-center text-md font-semi-bold dark:text-white">
                 What would you like to find in your documents?
               </p>
             )}
