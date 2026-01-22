@@ -6,7 +6,8 @@ import re
 import asyncio
 from typing import Dict, Any, Tuple
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import imghdr
 import requests
 from dotenv import load_dotenv
@@ -20,24 +21,15 @@ from utils.llm_client import get_llm_client, LLMClient
 LOGGER = logging.getLogger(__name__)
 
 load_dotenv()
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"), transport="rest")
+
+# Initialize Gemini client
+gemini_client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 
 # Maximum number of characters to include from each mentioned document's text
 MAX_MENTIONED_DOC_TEXT_LENGTH = 5000  # Reduced for faster processing
 
-# Gemini model name - centralized for easy updates
-GEMINI_MODEL_NAME = "gemini-2.0-flash"  # Fast model with good accuracy
-
-# Get configurable LLM client for chat (can be Gemini or OpenAI-compatible)
-_chat_llm_client: LLMClient = None
-
-
-def get_chat_client() -> LLMClient:
-    """Get the LLM client for chat operations."""
-    global _chat_llm_client
-    if _chat_llm_client is None:
-        _chat_llm_client = get_llm_client()
-    return _chat_llm_client
+# Gemini model name - using Gemini 3 Flash with minimal thinking
+GEMINI_MODEL_NAME = "gemini-3-flash-preview"
 
 
 def _is_greeting(text: str) -> bool:
@@ -778,28 +770,68 @@ Document Metadata:
 
         documents_context = "\n".join(documents_context_parts)
 
-        yield {"type": "status", "message": "Building AI prompt..."}
+        # Collect documents with URLs for file attachment (optional feature)
+        docs_with_urls = [
+            (i, doc.get("metadata", {}).get("title") or f"Document {i}", doc.get("document_url"))
+            for i, doc in enumerate(documents, 1)
+            if doc.get("document_url")
+        ]
 
-        # Load and parse the YAML prompt
-        import yaml
-        prompt_yaml = PROMPTS.get_prompt("chat_with_multiple_documents")
-        try:
-            prompt_data = yaml.safe_load(prompt_yaml)
-            system_prompt = prompt_data.get("system", "").strip()
-            user_template = prompt_data.get("user", "").strip()
-            instructions = prompt_data.get("instructions", "").strip()
+        # Download and upload files in PARALLEL (major latency reduction)
+        # Check if PDF attachments should be skipped for performance
+        skip_pdf = os.getenv("SKIP_PDF_ATTACHMENTS", "false").lower() == "true"
+        
+        uploaded_files = []
+        if docs_with_urls and not skip_pdf:
+            yield {"type": "status", "message": f"Downloading {len(docs_with_urls)} file(s) in parallel..."}
             
-            # Format the user section with actual data
-            user_prompt = user_template.format(
-                query=query,
-                documents_context=documents_context
+            async def download_and_upload(doc_num, doc_title, doc_url):
+                """Download and upload a single file."""
+                try:
+                    resp = await asyncio.to_thread(requests.get, doc_url, timeout=30)
+                    resp.raise_for_status()
+                    file_content = resp.content
+
+                    is_pdf = file_content.startswith(b"%PDF")
+                    img_type = imghdr.what(None, h=file_content)
+                    is_image = img_type is not None
+
+                    if is_pdf:
+                        mime_type = "application/pdf"
+                    elif is_image:
+                        mime_type = f"image/{img_type}"
+                    else:
+                        return None  # Unsupported file type
+
+                    file_content = compress_file_if_needed(file_content, mime_type)
+                    # Upload in thread to not block
+                    uploaded = await asyncio.to_thread(
+                        genai.upload_file, io.BytesIO(file_content), mime_type=mime_type
+                    )
+                    return (doc_num, doc_title, uploaded)
+                except Exception as e:
+                    LOGGER.warning(f"Could not attach document {doc_num} file to prompt: {e}")
+                    return None
+
+            # Run all downloads/uploads in parallel
+            results = await asyncio.gather(
+                *[download_and_upload(num, title, url) for num, title, url in docs_with_urls],
+                return_exceptions=True
             )
-            
-            # Combine all sections
-            prompt = f"{system_prompt}\n\n{user_prompt}\n\n{instructions}"
+            uploaded_files = [r for r in results if r is not None]
+            LOGGER.info(f"📎 Successfully attached {len(uploaded_files)} file(s)")
+
+        # Build the prompt using the template
+        yield {"type": "status", "message": "Building AI prompt..."}
+        
+        try:
+            prompt = PROMPTS.get_prompt("chat_with_multiple_documents").format(
+                query=query,
+                documents_context=documents_context,
+            )
         except Exception as e:
-            LOGGER.warning(f"Failed to parse YAML prompt, using fallback: {e}")
-            prompt = f"""You are a legal document assistant.
+            LOGGER.warning(f"Failed to load prompt template, using fallback: {e}")
+            prompt = f"""You are OutRiskAI's legal document assistant.
 Analyze the following documents and answer the user's query precisely.
 
 User Query: {query}
@@ -810,6 +842,7 @@ Instructions:
 - Answer only what's asked
 - Be concise, use clear markdown
 - Always specify which document you're referring to when citing information
+- Compare and contrast information across documents when relevant
 """
 
         # Log prompt length to debug if context is being passed
@@ -817,27 +850,47 @@ Instructions:
 
         yield {"type": "status", "message": "Generating response..."}
 
-        # Use configurable LLM client (Gemini or OpenAI-compatible)
-        llm_client = get_chat_client()
-        LOGGER.info(f"🤖 Using {llm_client.provider} (model={llm_client.model_name}) for multi-doc chat with {len(documents)} document(s)")
+        # Stream response using Gemini 3 with thinking_level=minimal for fast responses
+        
+        response = gemini_client.models.generate_content_stream(
+            model=GEMINI_MODEL_NAME,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.3,
+                max_output_tokens=8192,
+                thinking_config=types.ThinkingConfig(
+                    thinking_level="minimal"  #  Options: 'MINIMAL', 'LOW', 'MEDIUM', 'HIGH'
+                )
+            )
+        )
 
         input_tokens = 0
         output_tokens = 0
         chunk_count = 0
         total_chars = 0
 
-        # Stream response using the configurable LLM client
-        async for chunk in llm_client.stream_chat_completion(prompt, **generation_config):
-            if chunk["type"] == "content":
+        # Gemini 3's stream is synchronous, collect chunks in thread
+        def iterate_stream():
+            chunks = []
+            for chunk in response:
+                chunks.append(chunk)
+            return chunks
+        
+        chunks = await asyncio.to_thread(iterate_stream)
+        
+        for chunk in chunks:
+            # Track tokens if available
+            if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
+                input_tokens = getattr(chunk.usage_metadata, "prompt_token_count", 0) or input_tokens
+                output_tokens = getattr(chunk.usage_metadata, "candidates_token_count", 0) or output_tokens
+
+            if hasattr(chunk, "text") and chunk.text:
                 chunk_count += 1
-                chunk_len = len(chunk["text"])
+                chunk_len = len(chunk.text)
                 total_chars += chunk_len
                 LOGGER.debug(f"📝 Chunk {chunk_count}: {chunk_len} chars")
-                yield {"type": "content", "text": chunk["text"]}
+                yield {"type": "content", "text": chunk.text}
                 await asyncio.sleep(0)
-            elif chunk["type"] == "token_usage":
-                input_tokens = chunk.get("input_tokens", 0)
-                output_tokens = chunk.get("output_tokens", 0)
 
         LOGGER.info(f"✅ Streamed {chunk_count} chunks ({total_chars} total chars) for multi-document chat")
 
