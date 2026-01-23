@@ -33,12 +33,14 @@ load_dotenv()
 API_BASE_URL = "http://localhost:3000"  # Your Next.js app URL
 GLOBAL_CHAT_ENDPOINT = "/api/v1/chat/global"
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")  # Set this in your environment
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")  # Set this in your environment
 
-# List of Gemini models to use for evaluation
+# List of models to use for evaluation (supports both Gemini and OpenAI models)
 EVALUATION_MODELS = [
     "gemini-2.0-flash",
     "gemini-2.5-flash",
-    "gemini-3-flash-preview"
+    "gemini-3-flash-preview",
+    "gpt-4o-mini"
 ]
 
 # Colors for terminal output
@@ -167,22 +169,33 @@ def send_chat_message(session_token: str, message: str, conversation_id: Optiona
         }
 
 
-def evaluate_response_with_ai(question: str, expected: str, actual: str, gemini_api_key: str, model: str = "gemini-2.0-flash", max_retries: int = 3) -> Dict[str, Any]:
+def evaluate_response_with_ai(question: str, expected: str, actual: str, gemini_api_key: str, model: str = "gemini-2.0-flash", max_retries: int = 3, openai_api_key: str = "") -> Dict[str, Any]:
     """
-    Use Google Gemini to evaluate the actual response against the expected answer
+    Use AI (Gemini or OpenAI) to evaluate the actual response against the expected answer
     
     Args:
         question: The original question
         expected: Expected answer
         actual: Actual response from the system
         gemini_api_key: Google Gemini API key
-        model: Gemini model to use for evaluation (default: gemini-2.0-flash)
+        model: Model to use for evaluation (supports gemini-* and gpt-* models)
         max_retries: Maximum number of retries for rate limiting (default: 3)
+        openai_api_key: OpenAI API key (required for gpt-* models)
     
     Returns:
         Dictionary with score (0-100) and evaluation reasoning
     """
-    if not gemini_api_key:
+    # Determine if this is an OpenAI model
+    is_openai = model.startswith("gpt-") or model.startswith("o1-") or model.startswith("o3-")
+    
+    if is_openai and not openai_api_key:
+        return {
+            "score": 0,
+            "reasoning": "OpenAI API key not provided. Cannot evaluate.",
+            "success": False
+        }
+    
+    if not is_openai and not gemini_api_key:
         return {
             "score": 0,
             "reasoning": "Gemini API key not provided. Cannot evaluate.",
@@ -215,8 +228,122 @@ Provide your evaluation in the following JSON format:
 
 Only return the JSON, no additional text."""
 
-    # Gemini API endpoint - using the specified model
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={gemini_api_key}"
+    # Route to appropriate API based on model
+    if is_openai:
+        return _evaluate_with_openai(evaluation_prompt, openai_api_key, model, max_retries)
+    else:
+        return _evaluate_with_gemini(evaluation_prompt, gemini_api_key, model, max_retries)
+
+
+def _evaluate_with_openai(evaluation_prompt: str, api_key: str, model: str, max_retries: int) -> Dict[str, Any]:
+    """Evaluate using OpenAI API"""
+    url = "https://api.openai.com/v1/chat/completions"
+    
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "You are an AI evaluator. Always respond with valid JSON only."},
+            {"role": "user", "content": evaluation_prompt}
+        ],
+        "temperature": 0.3,
+        "max_tokens": 1024,
+        "response_format": {"type": "json_object"}
+    }
+    
+    # Retry logic with exponential backoff
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=60
+            )
+            
+            # Handle rate limiting with retry
+            if response.status_code == 429:
+                if attempt < max_retries - 1:
+                    wait_time = (2 ** attempt) * 5
+                    print_status(f"   ⏳ Rate limited, waiting {wait_time}s before retry ({attempt + 1}/{max_retries})...", "warning")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    return {
+                        "score": 0,
+                        "reasoning": f"Rate limited after {max_retries} retries",
+                        "success": False
+                    }
+            
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            # Extract content from OpenAI response
+            if 'choices' in data and len(data['choices']) > 0:
+                content = data['choices'][0]['message']['content']
+                
+                # Parse JSON response
+                evaluation = None
+                try:
+                    evaluation = json.loads(content)
+                except json.JSONDecodeError:
+                    # Try to extract JSON from response
+                    json_match = re.search(r'\{[^{}]*"score"[^{}]*\}', content, re.DOTALL)
+                    if json_match:
+                        try:
+                            evaluation = json.loads(json_match.group())
+                        except json.JSONDecodeError:
+                            pass
+                
+                if evaluation:
+                    return {
+                        "score": evaluation.get("score", 0),
+                        "factual_accuracy": evaluation.get("factual_accuracy", 0),
+                        "completeness": evaluation.get("completeness", 0),
+                        "relevance": evaluation.get("relevance", 0),
+                        "clarity": evaluation.get("clarity", 0),
+                        "reasoning": evaluation.get("reasoning", ""),
+                        "success": True
+                    }
+                else:
+                    return {
+                        "score": 0,
+                        "reasoning": f"Could not parse JSON response: {content[:200]}",
+                        "success": False
+                    }
+            else:
+                return {
+                    "score": 0,
+                    "reasoning": "No valid response from OpenAI API",
+                    "success": False
+                }
+        except Exception as e:
+            if attempt < max_retries - 1:
+                wait_time = (2 ** attempt) * 5
+                print_status(f"   ⏳ Error occurred, waiting {wait_time}s before retry ({attempt + 1}/{max_retries})...", "warning")
+                time.sleep(wait_time)
+                continue
+            return {
+                "score": 0,
+                "reasoning": f"Error during evaluation: {str(e)}",
+                "success": False
+            }
+    
+    return {
+        "score": 0,
+        "reasoning": "All retries exhausted",
+        "success": False
+    }
+
+
+def _evaluate_with_gemini(evaluation_prompt: str, api_key: str, model: str, max_retries: int) -> Dict[str, Any]:
+    """Evaluate using Gemini API"""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
     
     headers = {
         "Content-Type": "application/json"
@@ -369,6 +496,7 @@ def process_file(
     file_path: str,
     session_token: str,
     gemini_api_key: str,
+    openai_api_key: str = "",
     output_path: Optional[str] = None,
     delay_seconds: float = 1.0,
     models: list = None
@@ -380,9 +508,10 @@ def process_file(
         file_path: Path to the input Excel (.xlsx) or CSV (.csv) file
         session_token: NextAuth session token
         gemini_api_key: Google Gemini API key for evaluation
+        openai_api_key: OpenAI API key for evaluation (required for gpt-* models)
         output_path: Optional path for output file (only used for single model)
         delay_seconds: Delay between API calls to avoid rate limiting
-        models: List of Gemini models to use for evaluation (default: EVALUATION_MODELS)
+        models: List of models to use for evaluation (default: EVALUATION_MODELS)
     """
     if models is None:
         models = EVALUATION_MODELS
@@ -570,7 +699,7 @@ def process_file(
             
             # Evaluate with AI
             if expected and expected.lower() != 'nan':
-                eval_result = evaluate_response_with_ai(question, expected, actual, gemini_api_key, model=model)
+                eval_result = evaluate_response_with_ai(question, expected, actual, gemini_api_key, model=model, openai_api_key=openai_api_key)
                 
                 if eval_result["success"]:
                     model_df.at[idx, 'eval_score'] = eval_result["score"]
@@ -739,7 +868,7 @@ Examples:
   python test_global_chat.py test_questions.xlsx --single-model gemini-2.0-flash
 
   # Use specific models (creates 2 output files)
-  python test_global_chat.py test_questions.xlsx --models gemini-2.0-flash gemini-2.5-flash
+  python test_global_chat.py test_questions.xlsx --models gemini-2.0-flash gpt-4o-mini
 
   # Add delay between requests (useful for rate limiting)
   python test_global_chat.py test_questions.xlsx --delay 2.0
@@ -749,9 +878,14 @@ How it works:
   2. PHASE 2: Evaluates all responses using EACH specified model
   3. Creates separate output CSV files for each model's evaluation
 
+Supported models:
+  - Gemini: gemini-2.0-flash, gemini-2.5-flash, gemini-3-flash-preview, etc.
+  - OpenAI: gpt-4o-mini, gpt-4o, gpt-4-turbo, etc.
+
 Environment variables (loaded from .env file):
   NEXT_AUTH_SESSION_TOKEN - Your NextAuth session token
-  GEMINI_API_KEY          - Your Google Gemini API key for evaluation
+  GEMINI_API_KEY          - Your Google Gemini API key for Gemini model evaluation
+  OPENAI_API_KEY          - Your OpenAI API key for GPT model evaluation
         """
     )
     
@@ -768,7 +902,7 @@ Environment variables (loaded from .env file):
         '--models',
         nargs='+',
         default=EVALUATION_MODELS,
-        help=f'Gemini models to use for evaluation (default: {", ".join(EVALUATION_MODELS)})'
+        help=f'Models to use for evaluation - supports Gemini and OpenAI (default: {", ".join(EVALUATION_MODELS)})'
     )
     parser.add_argument(
         '--single-model',
@@ -823,10 +957,15 @@ Environment variables (loaded from .env file):
     # Get credentials
     session_token = authenticate(args.email, "")
     gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+    openai_api_key = os.getenv("OPENAI_API_KEY", "")
     
     if not gemini_api_key:
-        print_status("⚠️  Gemini API key not found. Evaluation will be skipped.", "warning")
-        print_status("   Set GEMINI_API_KEY environment variable to enable AI evaluation.", "info")
+        print_status("⚠️  Gemini API key not found. Gemini model evaluation will be skipped.", "warning")
+        print_status("   Set GEMINI_API_KEY environment variable to enable Gemini evaluation.", "info")
+    
+    if not openai_api_key:
+        print_status("⚠️  OpenAI API key not found. GPT model evaluation will be skipped.", "warning")
+        print_status("   Set OPENAI_API_KEY environment variable to enable OpenAI evaluation.", "info")
     
     # Determine which models to use
     if args.single_model:
@@ -842,6 +981,7 @@ Environment variables (loaded from .env file):
             file_path=args.input_file,
             session_token=session_token,
             gemini_api_key=gemini_api_key,
+            openai_api_key=openai_api_key,
             output_path=args.output,
             delay_seconds=args.delay,
             models=models_to_use
