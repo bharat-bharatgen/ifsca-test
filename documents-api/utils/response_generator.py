@@ -360,6 +360,36 @@ async def stream_response_from_documents(
 
         LOGGER.info(f"✅ Streamed {chunk_count} chunks for query")
 
+        # After the main answer, append raw OCR excerpts as explicit sources
+        try:
+            if paginated_documents:
+                sources_parts = []
+                sources_parts.append(
+                    "\n\n---\n\nSources (raw OCR excerpts from the documents used above):"
+                )
+
+                for i, doc in enumerate(paginated_documents, 1):
+                    doc_title = doc.get("title") or f"Document {i}"
+                    # Use the original text field from the search result as the OCR content
+                    doc_text = (doc.get("text") or "").strip()
+
+                    if not doc_text:
+                        continue
+
+                    # Use a bounded excerpt per document to keep responses manageable
+                    MAX_EXCERPT_LENGTH = 10000
+                    excerpt = doc_text[:MAX_EXCERPT_LENGTH]
+
+                    # Format so the frontend can treat this as a document list with pagination
+                    # Pattern: \n\n"Document Title"\n\n<raw text>
+                    sources_parts.append(f'\n\n"{doc_title}"\n\n{excerpt}')
+
+                if len(sources_parts) > 1:
+                    sources_block = "".join(sources_parts)
+                    yield sources_block
+        except Exception as e:
+            LOGGER.warning(f"Failed to append raw OCR sources for global-chat: {e}")
+
         # Consistent order: PAGINATION first, then TOKEN_USAGE
         yield (
             "\n__PAGINATION__:"

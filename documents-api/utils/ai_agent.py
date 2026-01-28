@@ -894,6 +894,35 @@ Instructions:
 
         LOGGER.info(f"✅ Streamed {chunk_count} chunks ({total_chars} total chars) for multi-document chat")
 
+        # After the main answer, append raw OCR excerpts as explicit sources
+        try:
+            if documents:
+                sources_parts = []
+                sources_parts.append(
+                    "\n\n---\n\nSources (raw OCR excerpts from the documents used above):"
+                )
+
+                for i, doc in enumerate(documents, 1):
+                    doc_metadata = doc.get("metadata", {}) or {}
+                    doc_title = doc_metadata.get("title") or f"Document {i}"
+                    doc_text = (doc.get("document_text") or "").strip()
+
+                    if not doc_text:
+                        continue
+
+                    # Use a reasonably large but bounded excerpt per document
+                    excerpt = doc_text[: MAX_MENTIONED_DOC_TEXT_LENGTH * 2]
+
+                    # Format so the frontend can treat this as a document list with pagination
+                    # Pattern: \n\n"Document Title"\n\n<raw text>
+                    sources_parts.append(f'\n\n"{doc_title}"\n\n{excerpt}')
+
+                if len(sources_parts) > 1:
+                    sources_block = "".join(sources_parts)
+                    yield {"type": "content", "text": sources_block}
+        except Exception as e:
+            LOGGER.warning(f"Failed to append raw OCR sources for multi-doc chat: {e}")
+
         # Yield final token usage
         yield {
             "type": "token_usage",

@@ -955,9 +955,27 @@ function ChatMessage({
   status = null,
 }) {
   const [visibleDocuments, setVisibleDocuments] = useState(10);
+  const [showSources, setShowSources] = useState(false);
 
-  // Parse document entries for AGENT messages
-  const parsed = sender === "AGENT" ? parseDocumentEntries(message) : null;
+  // Detect and split out "Sources" block appended to an AGENT answer
+  const SOURCES_MARKER =
+    "\n\n---\n\nSources (raw OCR excerpts from the documents used above):";
+  let mainMessage = message;
+  let sourcesMessage = null;
+
+  if (sender === "AGENT" && typeof message === "string") {
+    const markerIndex = message.indexOf(SOURCES_MARKER);
+    if (markerIndex !== -1) {
+      mainMessage = message.slice(0, markerIndex).trimEnd();
+      sourcesMessage = message.slice(markerIndex).trimStart();
+    }
+  }
+
+  // Parse document entries for AGENT messages (used for pure document lists)
+  const parsed =
+    sender === "AGENT" && !sourcesMessage
+      ? parseDocumentEntries(message)
+      : null;
   const isDocumentList = parsed?.isDocumentList;
   const documents = parsed?.documents || [];
 
@@ -969,7 +987,7 @@ function ChatMessage({
     setVisibleDocuments(10);
   };
 
-  // For AGENT messages with document lists, render with pagination
+  // For AGENT messages with document lists (and no separate sources block), render with pagination
   if (isDocumentList && documents.length > 0) {
     const visibleDocs = documents.slice(0, visibleDocuments);
     const hasMore = documents.length > visibleDocuments;
@@ -1039,14 +1057,16 @@ function ChatMessage({
       style={{ justifyContent: sender === "AGENT" ? "start" : "end" }}
     >
       <div className="flex flex-col gap-1 max-w-[90%]">
-        {/* Only render bubble if there is a message or if it's NOT streaming (to show empty state if finished empty?) */}
+        {/* Main answer bubble */}
         {/* Actually, if it's streaming and empty, we rely on the status below. */}
         {/* If it's finished and empty, we probably shouldn't show it, but that's rare. */}
-        {(message || (!isStreaming && !status)) && (
+        {(mainMessage || (!isStreaming && !status)) && (
           <div className="p-3 text-sm bg-gray-100 rounded-lg dark:bg-gray-900 text-foreground">
             <div className="prose-sm document-response max-w-none">
-              <Markdown components={markdownComponents}>{message}</Markdown>
-              {isStreaming && !message && !status && (
+              <Markdown components={markdownComponents}>
+                {mainMessage}
+              </Markdown>
+              {isStreaming && !mainMessage && !status && (
                 <div className="flex items-center h-4 gap-1">
                   <span
                     className="w-2 h-2 bg-current rounded-full animate-bounce"
@@ -1063,7 +1083,7 @@ function ChatMessage({
                 </div>
               )}
               {/* Streaming cursor when content is being added */}
-              {isStreaming && message && (
+              {isStreaming && mainMessage && (
                 <span className="inline-block w-0.5 h-4 ml-0.5 bg-primary animate-pulse" />
               )}
             </div>
@@ -1072,6 +1092,89 @@ function ChatMessage({
                 {new Date(timestamp).toLocaleTimeString()}
               </p>
             )}
+          </div>
+        )}
+
+        {/* Collapsible Sources section for raw OCR excerpts (when present) */}
+        {sender === "AGENT" && sourcesMessage && (
+          <div className="mt-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="px-0 text-xs text-primary hover:text-primary/80"
+              onClick={() => {
+                setVisibleDocuments(10);
+                setShowSources(true);
+              }}
+            >
+              Show sources
+            </Button>
+
+            <Dialog open={showSources} onOpenChange={setShowSources}>
+              <DialogContent
+                blurOverlay={true}
+                className="sm:max-w-[1000px] max-h-[90vh] overflow-y-auto"
+              >
+                <DialogTitle>Sources</DialogTitle>
+                <div className="mt-2">
+                  {(() => {
+                    const parsedSources = parseDocumentEntries(sourcesMessage);
+                    const sourceDocs = parsedSources?.documents || [];
+                    const visibleSourceDocs = sourceDocs.slice(
+                      0,
+                      visibleDocuments,
+                    );
+                    const hasMoreSources = sourceDocs.length > visibleDocuments;
+
+                    return (
+                      <div className="prose-xs document-response max-w-none">
+                        {parsedSources.header && (
+                          <Markdown components={markdownComponents}>
+                            {parsedSources.header}
+                          </Markdown>
+                        )}
+
+                        {visibleSourceDocs.map((doc, index) => (
+                          <div key={index} className="mt-3">
+                            <Markdown components={markdownComponents}>
+                              {doc.content}
+                            </Markdown>
+                          </div>
+                        ))}
+
+                        {hasMoreSources && (
+                          <div className="flex justify-center mt-3">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                setVisibleDocuments((prev) =>
+                                  Math.min(prev + 10, sourceDocs.length),
+                                )
+                              }
+                            >
+                              View More ({sourceDocs.length - visibleDocuments}{" "}
+                              more)
+                            </Button>
+                          </div>
+                        )}
+                        {visibleDocuments > 10 && (
+                          <div className="flex justify-center mt-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setVisibleDocuments(10)}
+                            >
+                              View Less
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </DialogContent>
+            </Dialog>
           </div>
         )}
         {isStreaming && status && (
