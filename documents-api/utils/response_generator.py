@@ -347,11 +347,13 @@ async def stream_response_from_documents(
         input_tokens = 0
         output_tokens = 0
         chunk_count = 0
+        full_response_text = ""
 
         # Use the configurable LLM client for streaming
         async for chunk in llm_client.stream_chat_completion(prompt, **generation_config):
             if chunk["type"] == "content":
                 chunk_count += 1
+                full_response_text += chunk["text"]
                 yield chunk["text"]
                 await asyncio.sleep(0)  # Small yield to ensure chunks are flushed
             elif chunk["type"] == "token_usage":
@@ -360,35 +362,40 @@ async def stream_response_from_documents(
 
         LOGGER.info(f"✅ Streamed {chunk_count} chunks for query")
 
-        # After the main answer, append raw OCR excerpts as explicit sources
+        # Only append sources when AI actually found relevant info (not "not mentioned" etc.)
         try:
-            if paginated_documents:
-                sources_parts = []
-                sources_parts.append(
-                    "\n\n---\n\nSources (raw OCR excerpts from the documents used above):"
-                )
+            from utils.source_relevance import response_indicates_not_found
 
-                for i, doc in enumerate(paginated_documents, 1):
-                    doc_title = doc.get("title") or f"Document {i}"
-                    # Use the original text field from the search result as the OCR content
-                    doc_text = (doc.get("text") or "").strip()
-
-                    if not doc_text:
-                        continue
-
-                    # Use a bounded excerpt per document to keep responses manageable
-                    MAX_EXCERPT_LENGTH = 10000
-                    excerpt = doc_text[:MAX_EXCERPT_LENGTH]
-
-                    # Format so the frontend can treat this as a document list with pagination
-                    # Pattern: \n\n"Document Title"\n\n<raw text>
-                    sources_parts.append(f'\n\n"{doc_title}"\n\n{excerpt}')
-
-                if len(sources_parts) > 1:
-                    sources_block = "".join(sources_parts)
+            if paginated_documents and not response_indicates_not_found(full_response_text):
+                source_docs = []
+                for doc in paginated_documents:
+                    doc_id = doc.get("id", "")
+                    doc_url = (
+                        doc.get("metadata", {}).get("documentUrl")
+                        if isinstance(doc.get("metadata"), dict)
+                        else ""
+                    ) or doc.get("documentUrl", "")
+                    meta = doc.get("metadata") or {}
+                    doc_title = (
+                        doc.get("title")
+                        or (meta.get("title") if isinstance(meta, dict) else "")
+                        or doc.get("documentName", "")
+                        or "Document"
+                    )
+                    source_docs.append(
+                        {"id": doc_id, "url": doc_url or "", "label": doc_title}
+                    )
+                if source_docs:
+                    sources_block = (
+                        "\n\n---\n\nSources:\n__SOURCE_DOCS__: "
+                        + json.dumps(source_docs, ensure_ascii=False)
+                        + "\n"
+                    )
                     yield sources_block
+            elif paginated_documents and response_indicates_not_found(full_response_text):
+                LOGGER.info("Skipping sources - AI indicated nothing relevant was found")
         except Exception as e:
-            LOGGER.warning(f"Failed to append raw OCR sources for global-chat: {e}")
+            LOGGER.warning(f"Failed to append source docs for global-chat: {e}")
 
         # Consistent order: PAGINATION first, then TOKEN_USAGE
         yield (

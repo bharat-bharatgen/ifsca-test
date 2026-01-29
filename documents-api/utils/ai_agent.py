@@ -499,6 +499,7 @@ async def stream_chat_with_specific_document(
         input_tokens = 0
         output_tokens = 0
         chunk_count = 0
+        full_response_text = ""
 
         async for chunk in response:
             # Track tokens if available (Gemini 1.5/pro often provides this in chunks or at end)
@@ -510,11 +511,31 @@ async def stream_chat_with_specific_document(
 
             if chunk.text:
                 chunk_count += 1
+                full_response_text += chunk.text
                 yield {"type": "content", "text": chunk.text}
                 # Ensure chunk is flushed immediately for real-time streaming
                 await asyncio.sleep(0)
 
         LOGGER.info(f"✅ Streamed {chunk_count} chunks for document chat")
+
+        # Only append sources when AI actually found relevant info (not "not mentioned" etc.)
+        try:
+            from utils.source_relevance import response_indicates_not_found
+
+            if not response_indicates_not_found(full_response_text):
+                doc_url = document_url or (metadata or {}).get("documentUrl")
+                doc_title = (metadata or {}).get("title") or "Document"
+                source_docs = [{"id": document_id, "url": doc_url or "", "label": doc_title}]
+                sources_block = (
+                    "\n\n---\n\nSources:\n__SOURCE_DOCS__: "
+                    + json.dumps(source_docs, ensure_ascii=False)
+                    + "\n"
+                )
+                yield {"type": "content", "text": sources_block}
+            else:
+                LOGGER.info("Skipping sources - AI indicated nothing relevant was found")
+        except Exception as e:
+            LOGGER.warning(f"Failed to append source docs for document chat: {e}")
 
         # Yield final token usage
         yield {
@@ -868,6 +889,7 @@ Instructions:
         output_tokens = 0
         chunk_count = 0
         total_chars = 0
+        full_response_text = ""
 
         # Gemini 3's stream is synchronous, collect chunks in thread
         def iterate_stream():
@@ -888,40 +910,39 @@ Instructions:
                 chunk_count += 1
                 chunk_len = len(chunk.text)
                 total_chars += chunk_len
+                full_response_text += chunk.text
                 LOGGER.debug(f"📝 Chunk {chunk_count}: {chunk_len} chars")
                 yield {"type": "content", "text": chunk.text}
                 await asyncio.sleep(0)
 
         LOGGER.info(f"✅ Streamed {chunk_count} chunks ({total_chars} total chars) for multi-document chat")
 
-        # After the main answer, append raw OCR excerpts as explicit sources
+        # Only append sources when AI actually found relevant info (not "not mentioned" etc.)
         try:
-            if documents:
-                sources_parts = []
-                sources_parts.append(
-                    "\n\n---\n\nSources (raw OCR excerpts from the documents used above):"
-                )
+            from utils.source_relevance import response_indicates_not_found
 
-                for i, doc in enumerate(documents, 1):
-                    doc_metadata = doc.get("metadata", {}) or {}
-                    doc_title = doc_metadata.get("title") or f"Document {i}"
-                    doc_text = (doc.get("document_text") or "").strip()
-
-                    if not doc_text:
-                        continue
-
-                    # Use a reasonably large but bounded excerpt per document
-                    excerpt = doc_text[: MAX_MENTIONED_DOC_TEXT_LENGTH * 2]
-
-                    # Format so the frontend can treat this as a document list with pagination
-                    # Pattern: \n\n"Document Title"\n\n<raw text>
-                    sources_parts.append(f'\n\n"{doc_title}"\n\n{excerpt}')
-
-                if len(sources_parts) > 1:
-                    sources_block = "".join(sources_parts)
+            if documents and not response_indicates_not_found(full_response_text):
+                source_docs = []
+                for doc in documents:
+                    doc_id = doc.get("document_id", "")
+                    doc_url = doc.get("document_url") or (doc.get("metadata") or {}).get("documentUrl")
+                    doc_title = (doc.get("metadata") or {}).get("title") or doc.get("document_name") or "Document"
+                    source_docs.append({
+                        "id": doc_id,
+                        "url": doc_url or "",
+                        "label": doc_title,
+                    })
+                if source_docs:
+                    sources_block = (
+                        "\n\n---\n\nSources:\n__SOURCE_DOCS__: "
+                        + json.dumps(source_docs, ensure_ascii=False)
+                        + "\n"
+                    )
                     yield {"type": "content", "text": sources_block}
+            elif documents and response_indicates_not_found(full_response_text):
+                LOGGER.info("Skipping sources - AI indicated nothing relevant was found")
         except Exception as e:
-            LOGGER.warning(f"Failed to append raw OCR sources for multi-doc chat: {e}")
+            LOGGER.warning(f"Failed to append source docs for multi-doc chat: {e}")
 
         # Yield final token usage
         yield {

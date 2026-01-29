@@ -17,7 +17,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { parseDocumentEntries } from "@/lib/chat-utils";
+import { parseDocumentEntries, parseSourceDocs } from "@/lib/chat-utils";
+import { PdfPreviewDialog } from "@/components/pdf-preview-dialog";
 import { DOCUMENT_FORMATTING } from "@/lib/document-formatting";
 import { getDocumentMarkdownComponents } from "@/lib/markdown";
 import DesktopConversationSidebar from "@/components/desktop";
@@ -947,6 +948,59 @@ export default function GlobalChatPage() {
   );
 }
 
+function SourcesLegacyContent({
+  sourcesMessage,
+  visibleDocuments,
+  setVisibleDocuments,
+  markdownComponents,
+}) {
+  const parsedSources = parseDocumentEntries(sourcesMessage);
+  const legacyDocs = parsedSources?.documents || [];
+  const visibleSourceDocs = legacyDocs.slice(0, visibleDocuments);
+  const hasMoreSources = legacyDocs.length > visibleDocuments;
+
+  return (
+    <div className="prose-xs document-response max-w-none">
+      {parsedSources.header && (
+        <Markdown components={markdownComponents}>
+          {parsedSources.header}
+        </Markdown>
+      )}
+      {visibleSourceDocs.map((doc, index) => (
+        <div key={index} className="mt-3">
+          <Markdown components={markdownComponents}>{doc.content}</Markdown>
+        </div>
+      ))}
+      {hasMoreSources && (
+        <div className="flex justify-center mt-3">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              setVisibleDocuments((prev) =>
+                Math.min(prev + 10, legacyDocs.length),
+              )
+            }
+          >
+            View More ({legacyDocs.length - visibleDocuments} more)
+          </Button>
+        </div>
+      )}
+      {visibleDocuments > 10 && (
+        <div className="flex justify-center mt-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setVisibleDocuments(10)}
+          >
+            View Less
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ChatMessage({
   message,
   sender,
@@ -956,20 +1010,32 @@ function ChatMessage({
 }) {
   const [visibleDocuments, setVisibleDocuments] = useState(10);
   const [showSources, setShowSources] = useState(false);
+  const [previewDoc, setPreviewDoc] = useState(null);
 
   // Detect and split out "Sources" block appended to an AGENT answer
-  const SOURCES_MARKER =
+  // Supports both: new format (__SOURCE_DOCS__) and legacy (raw OCR excerpts)
+  const SOURCES_MARKER_NEW = "\n\n---\n\nSources:\n__SOURCE_DOCS__:";
+  const SOURCES_MARKER_OLD =
     "\n\n---\n\nSources (raw OCR excerpts from the documents used above):";
   let mainMessage = message;
   let sourcesMessage = null;
 
   if (sender === "AGENT" && typeof message === "string") {
-    const markerIndex = message.indexOf(SOURCES_MARKER);
+    const idxNew = message.indexOf(SOURCES_MARKER_NEW);
+    const idxOld = message.indexOf(SOURCES_MARKER_OLD);
+    const markerIndex =
+      idxNew !== -1
+        ? idxNew
+        : idxOld !== -1
+          ? idxOld
+          : -1;
     if (markerIndex !== -1) {
       mainMessage = message.slice(0, markerIndex).trimEnd();
       sourcesMessage = message.slice(markerIndex).trimStart();
     }
   }
+
+  const sourceDocs = sourcesMessage ? parseSourceDocs(sourcesMessage) : null;
 
   // Parse document entries for AGENT messages (used for pure document lists)
   const parsed =
@@ -1095,7 +1161,7 @@ function ChatMessage({
           </div>
         )}
 
-        {/* Collapsible Sources section for raw OCR excerpts (when present) */}
+        {/* Collapsible Sources section - pdf 1, pdf 2 with preview (when present) */}
         {sender === "AGENT" && sourcesMessage && (
           <div className="mt-2">
             <Button
@@ -1117,64 +1183,37 @@ function ChatMessage({
               >
                 <DialogTitle>Sources</DialogTitle>
                 <div className="mt-2">
-                  {(() => {
-                    const parsedSources = parseDocumentEntries(sourcesMessage);
-                    const sourceDocs = parsedSources?.documents || [];
-                    const visibleSourceDocs = sourceDocs.slice(
-                      0,
-                      visibleDocuments,
-                    );
-                    const hasMoreSources = sourceDocs.length > visibleDocuments;
-
-                    return (
-                      <div className="prose-xs document-response max-w-none">
-                        {parsedSources.header && (
-                          <Markdown components={markdownComponents}>
-                            {parsedSources.header}
-                          </Markdown>
-                        )}
-
-                        {visibleSourceDocs.map((doc, index) => (
-                          <div key={index} className="mt-3">
-                            <Markdown components={markdownComponents}>
-                              {doc.content}
-                            </Markdown>
-                          </div>
-                        ))}
-
-                        {hasMoreSources && (
-                          <div className="flex justify-center mt-3">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() =>
-                                setVisibleDocuments((prev) =>
-                                  Math.min(prev + 10, sourceDocs.length),
-                                )
-                              }
-                            >
-                              View More ({sourceDocs.length - visibleDocuments}{" "}
-                              more)
-                            </Button>
-                          </div>
-                        )}
-                        {visibleDocuments > 10 && (
-                          <div className="flex justify-center mt-2">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setVisibleDocuments(10)}
-                            >
-                              View Less
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
+                  {sourceDocs && sourceDocs.length > 0 ? (
+                    <div className="flex flex-col gap-2">
+                      {sourceDocs.map((doc, index) => (
+                        <Button
+                          key={index}
+                          variant="outline"
+                          size="sm"
+                          className="w-full justify-start text-primary hover:text-primary/80 text-left"
+                          onClick={() => setPreviewDoc(doc)}
+                        >
+                          {doc.label}
+                        </Button>
+                      ))}
+                    </div>
+                  ) : (
+                    <SourcesLegacyContent
+                      sourcesMessage={sourcesMessage}
+                      visibleDocuments={visibleDocuments}
+                      setVisibleDocuments={setVisibleDocuments}
+                      markdownComponents={markdownComponents}
+                    />
+                  )}
                 </div>
               </DialogContent>
             </Dialog>
+
+            <PdfPreviewDialog
+              open={Boolean(previewDoc)}
+              onOpenChange={(open) => !open && setPreviewDoc(null)}
+              sourceDoc={previewDoc}
+            />
           </div>
         )}
         {isStreaming && status && (

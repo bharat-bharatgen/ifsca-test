@@ -1,4 +1,36 @@
 /**
+ * Parse __SOURCE_DOCS__ JSON array from message (new format with id, url, label).
+ * @param {string} message - The message content to parse
+ * @returns {Array<{id: string, url: string, label: string}>|null} - Source docs or null if not found
+ */
+export function parseSourceDocs(message) {
+  const marker = "__SOURCE_DOCS__:";
+  const idx = message.indexOf(marker);
+  if (idx === -1) return null;
+  const afterMarker = message.slice(idx + marker.length).trim();
+  const startBracket = afterMarker.indexOf("[");
+  if (startBracket === -1) return null;
+  let depth = 0;
+  let endBracket = -1;
+  for (let i = startBracket; i < afterMarker.length; i++) {
+    if (afterMarker[i] === "[") depth++;
+    else if (afterMarker[i] === "]") {
+      depth--;
+      if (depth === 0) {
+        endBracket = i;
+        break;
+      }
+    }
+  }
+  if (endBracket === -1) return null;
+  try {
+    return JSON.parse(afterMarker.slice(startBracket, endBracket + 1));
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Helper function to parse document entries from AGENT messages
  * Parses messages that contain document lists in the format:
  * "I found X documents:\n\n\n\"Document Title\"\n\nDocument details..."
