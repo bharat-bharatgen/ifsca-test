@@ -419,21 +419,25 @@ export async function processDocument(jobId, documentId, documentUrl, userId, we
           documentId,
           embeddingStrategy,
         });
+        const metadataPayload = {
+          title: response_from_ai.contract_details?.title || "Untitled Document",
+          type: response_from_ai.contract_details?.type || "document",
+          user_id: user.id,
+          embedding_strategy: embeddingStrategy,
+          category: documentCategory,
+          subCategory: documentSubCategory,
+          category_confidence: categoryConfidence,
+        };
+        if (Array.isArray(response_from_ai.raw_ocr_pages) && response_from_ai.raw_ocr_pages.length > 0) {
+          metadataPayload.pages = response_from_ai.raw_ocr_pages;
+        }
         const embeddingResponse = await axiosWithRetry(
           () => axios.post(
             env.DOCUMENT_API_URL + "/api/generate-embedding",
             {
               document_id: documentId,
               document_text: documentText,
-              metadata: {
-                title: response_from_ai.contract_details?.title || "Untitled Document",
-                type: response_from_ai.contract_details?.type || "document",
-                user_id: user.id,
-                embedding_strategy: embeddingStrategy,
-                category: documentCategory,
-                subCategory: documentSubCategory,
-                category_confidence: categoryConfidence,
-              },
+              metadata: metadataPayload,
             },
             {
               headers: {

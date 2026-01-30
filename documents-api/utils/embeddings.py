@@ -1,8 +1,9 @@
 import asyncio
+import json
 import logging
 import os
 import uuid
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 import asyncpg
 import google.generativeai as genai
@@ -95,17 +96,20 @@ async def generate_embedding(
                     output_dimensionality=256
                 )
                 embedding_256d = "[" + ",".join(map(str, result_256d["embedding"])) + "]"
-                
-                # Insert/update document_info table (matching app schema)
+                # Optional: store page-level text for citations (list of {"page": N, "text": "..."})
+                pages: Optional[List[Dict[str, Any]]] = metadata.get("pages")
+                json_doc = json.dumps({"pages": pages}) if pages else None
+                # Insert/update document_info table (matching app schema); jsonDoc stores pages for citations
                 await conn.execute("""
-                    INSERT INTO document_info (id, "documentId", document, "embedding_256d", "embedding_model", "createdAt", "updatedAt")
-                    VALUES ($1, $2, $3, $4::vector(256), $5, NOW(), NOW())
+                    INSERT INTO document_info (id, "documentId", document, "embedding_256d", "embedding_model", "jsonDoc", "createdAt", "updatedAt")
+                    VALUES ($1, $2, $3, $4::vector(256), $5, $6::jsonb, NOW(), NOW())
                     ON CONFLICT ("documentId") 
                     DO UPDATE SET document = EXCLUDED.document,
                                   "embedding_256d" = EXCLUDED."embedding_256d",
                                   "embedding_model" = EXCLUDED."embedding_model",
+                                  "jsonDoc" = COALESCE(EXCLUDED."jsonDoc", document_info."jsonDoc"),
                                   "updatedAt" = NOW()
-                """, str(uuid.uuid4()), document_id, document_text, embedding_256d, "gemini-embedding-001")
+                """, str(uuid.uuid4()), document_id, document_text, embedding_256d, "gemini-embedding-001", json_doc)
                 
                 # Delete old chunk embeddings
                 await conn.execute('DELETE FROM document_embeddings WHERE "documentId" = $1', document_id)

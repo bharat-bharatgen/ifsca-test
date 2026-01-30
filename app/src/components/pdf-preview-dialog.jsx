@@ -67,7 +67,7 @@ export function PdfPreviewDialog({ open, onOpenChange, sourceDoc }) {
         <DialogTitle className="px-6 py-4 border-b">
           {sourceDoc?.label || "Document Preview"}
         </DialogTitle>
-        <div className="flex-1 min-h-0 overflow-auto p-4">
+        <div className="flex-1 min-h-0 overflow-auto p-4 flex flex-col gap-4">
           {isLoading && (
             <div className="flex items-center justify-center h-[70vh]">
               <LoaderIcon className="w-10 h-10 animate-spin text-muted-foreground" />
@@ -86,6 +86,26 @@ export function PdfPreviewDialog({ open, onOpenChange, sourceDoc }) {
               <Worker workerUrl="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js">
                 <PdfViewer fileUrl={pdfUrl} />
               </Worker>
+            </div>
+          )}
+          {sourceDoc?.citations && sourceDoc.citations.length > 0 && (
+            <div className="rounded-lg border bg-muted/30 p-4 text-sm">
+              <h4 className="font-medium text-foreground mb-2">Cited in this response</h4>
+              <p className="text-xs text-muted-foreground mb-2">
+                Page and section references from which the AI generated the answer:
+              </p>
+              <ul className="space-y-2">
+                {sourceDoc.citations.map((c, i) => (
+                  <li key={i} className="flex flex-col gap-0.5">
+                    {c.page != null && (
+                      <span className="font-medium text-foreground">Page {c.page}</span>
+                    )}
+                    {c.excerpt && (
+                      <span className="text-muted-foreground italic">&ldquo;{c.excerpt}&rdquo;</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
         </div>

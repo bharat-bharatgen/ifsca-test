@@ -300,6 +300,13 @@ export const POST = async (req) => {
                         include: { documentInfo: true },
                       });
                       if (doc) {
+                        const jsonDoc = doc.documentInfo?.jsonDoc;
+                        const pages =
+                          jsonDoc &&
+                          typeof jsonDoc === "object" &&
+                          Array.isArray(jsonDoc.pages)
+                            ? jsonDoc.pages
+                            : undefined;
                         return {
                           document_id: doc.id,
                           document_text:
@@ -317,6 +324,7 @@ export const POST = async (req) => {
                             state: doc.state || "N/A",
                             city: doc.city || "N/A",
                             documentNumber: doc.documentNumber || "",
+                            ...(pages && { pages }),
                           },
                           document_url: doc.documentUrl || null,
                           similarity: matchedDoc.similarity,

@@ -763,7 +763,7 @@ async def stream_chat_with_multiple_documents(
 
         yield {"type": "status", "message": f"Processing {len(documents)} document(s)..."}
 
-        # Build context for all documents using extracted text (no file downloads needed)
+        # Build context for all documents using extracted text (with optional page markers for citations)
         documents_context_parts = []
 
         for i, doc in enumerate(documents, 1):
@@ -771,6 +771,18 @@ async def stream_chat_with_multiple_documents(
             doc_text = doc.get("document_text", "")
             doc_metadata = doc.get("metadata", {})
             doc_title = doc_metadata.get("title") or f"Untitled Document {i}"
+            pages = doc.get("pages")  # list of {"page": N, "text": "..."} for citations
+
+            # When we have page-level text, build context with [Page N] markers so the model can cite pages
+            if pages and isinstance(pages, list):
+                text_parts = []
+                for p in pages:
+                    page_num = p.get("page", 0)
+                    page_text = (p.get("text") or "")[: MAX_MENTIONED_DOC_TEXT_LENGTH]
+                    text_parts.append(f"[Page {page_num}]\n{page_text}")
+                context_text = "\n\n".join(text_parts)[: MAX_MENTIONED_DOC_TEXT_LENGTH * 2]
+            else:
+                context_text = doc_text[: MAX_MENTIONED_DOC_TEXT_LENGTH * 2]
 
             # Log document text length for debugging
             LOGGER.info(f"📄 Doc {i} '{doc_title}': text length = {len(doc_text)} chars")
@@ -782,7 +794,7 @@ async def stream_chat_with_multiple_documents(
 {"=" * 80}
 
 Document Text:
-{doc_text[: MAX_MENTIONED_DOC_TEXT_LENGTH * 2]}
+{context_text}
 
 Document Metadata:
 {json.dumps(doc_metadata, indent=2, ensure_ascii=False)}
@@ -917,6 +929,32 @@ Instructions:
 
         LOGGER.info(f"✅ Streamed {chunk_count} chunks ({total_chars} total chars) for multi-document chat")
 
+        # Parse __CITATIONS__ from response if present (document title, page, excerpt)
+        parsed_citations = []
+        try:
+            marker = "__CITATIONS__:"
+            if marker in full_response_text:
+                start = full_response_text.index(marker) + len(marker)
+                rest = full_response_text[start:].strip()
+                # Extract JSON array (take from first '[' to matching ']')
+                depth = 0
+                end = -1
+                for i, c in enumerate(rest):
+                    if c == "[":
+                        depth += 1
+                    elif c == "]":
+                        depth -= 1
+                        if depth == 0:
+                            end = i + 1
+                            break
+                if end > 0:
+                    arr_str = rest[:end]
+                    parsed_citations = json.loads(arr_str)
+                    if not isinstance(parsed_citations, list):
+                        parsed_citations = []
+        except (ValueError, json.JSONDecodeError) as e:
+            LOGGER.debug(f"Could not parse __CITATIONS__ from response: {e}")
+
         # Only append sources when AI actually found relevant info (not "not mentioned" etc.)
         try:
             from utils.source_relevance import response_indicates_not_found
@@ -927,11 +965,25 @@ Instructions:
                     doc_id = doc.get("document_id", "")
                     doc_url = doc.get("document_url") or (doc.get("metadata") or {}).get("documentUrl")
                     doc_title = (doc.get("metadata") or {}).get("title") or doc.get("document_name") or "Document"
-                    source_docs.append({
+                    # Match citations for this document by title (exact or normalized)
+                    citations_for_doc = []
+                    for c in parsed_citations:
+                        if not isinstance(c, dict):
+                            continue
+                        cit_doc = (c.get("document") or "").strip()
+                        if cit_doc and (cit_doc == doc_title or cit_doc.lower() in doc_title.lower() or doc_title.lower() in cit_doc.lower()):
+                            citations_for_doc.append({
+                                "page": c.get("page"),
+                                "excerpt": (c.get("excerpt") or "").strip()[:500],
+                            })
+                    entry = {
                         "id": doc_id,
                         "url": doc_url or "",
                         "label": doc_title,
-                    })
+                    }
+                    if citations_for_doc:
+                        entry["citations"] = citations_for_doc
+                    source_docs.append(entry)
                 if source_docs:
                     sources_block = (
                         "\n\n---\n\nSources:\n__SOURCE_DOCS__: "

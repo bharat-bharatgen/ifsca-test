@@ -17,7 +17,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { parseDocumentEntries, parseSourceDocs } from "@/lib/chat-utils";
+import { parseDocumentEntries, parseSourceDocs, stripCitationsBlock, injectDocumentLinks } from "@/lib/chat-utils";
 import { PdfPreviewDialog } from "@/components/pdf-preview-dialog";
 import { DOCUMENT_FORMATTING } from "@/lib/document-formatting";
 import { getDocumentMarkdownComponents } from "@/lib/markdown";
@@ -1009,7 +1009,6 @@ function ChatMessage({
   status = null,
 }) {
   const [visibleDocuments, setVisibleDocuments] = useState(10);
-  const [showSources, setShowSources] = useState(false);
   const [previewDoc, setPreviewDoc] = useState(null);
 
   // Detect and split out "Sources" block appended to an AGENT answer
@@ -1033,9 +1032,22 @@ function ChatMessage({
       mainMessage = message.slice(0, markerIndex).trimEnd();
       sourcesMessage = message.slice(markerIndex).trimStart();
     }
+    // Remove __CITATIONS__: [...] from displayed answer (backend adds it for parsing)
+    mainMessage = stripCitationsBlock(mainMessage);
   }
 
   const sourceDocs = sourcesMessage ? parseSourceDocs(sourcesMessage) : null;
+  const messageWithDocLinks =
+    sender === "AGENT" && sourceDocs?.length
+      ? injectDocumentLinks(mainMessage, sourceDocs)
+      : mainMessage;
+  const componentsForMessage =
+    sender === "AGENT" && sourceDocs?.length
+      ? getDocumentMarkdownComponents(DOCUMENT_FORMATTING, {
+          sourceDocs,
+          onDocClick: setPreviewDoc,
+        })
+      : markdownComponents;
 
   // Parse document entries for AGENT messages (used for pure document lists)
   const parsed =
@@ -1129,8 +1141,8 @@ function ChatMessage({
         {(mainMessage || (!isStreaming && !status)) && (
           <div className="p-3 text-sm bg-gray-100 rounded-lg dark:bg-gray-900 text-foreground">
             <div className="prose-sm document-response max-w-none">
-              <Markdown components={markdownComponents}>
-                {mainMessage}
+              <Markdown components={componentsForMessage}>
+                {messageWithDocLinks}
               </Markdown>
               {isStreaming && !mainMessage && !status && (
                 <div className="flex items-center h-4 gap-1">
@@ -1161,60 +1173,13 @@ function ChatMessage({
           </div>
         )}
 
-        {/* Collapsible Sources section - pdf 1, pdf 2 with preview (when present) */}
-        {sender === "AGENT" && sourcesMessage && (
-          <div className="mt-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="px-0 text-xs text-primary hover:text-primary/80"
-              onClick={() => {
-                setVisibleDocuments(10);
-                setShowSources(true);
-              }}
-            >
-              Show sources
-            </Button>
-
-            <Dialog open={showSources} onOpenChange={setShowSources}>
-              <DialogContent
-                blurOverlay={true}
-                className="sm:max-w-[1000px] max-h-[90vh] overflow-y-auto"
-              >
-                <DialogTitle>Sources</DialogTitle>
-                <div className="mt-2">
-                  {sourceDocs && sourceDocs.length > 0 ? (
-                    <div className="flex flex-col gap-2">
-                      {sourceDocs.map((doc, index) => (
-                        <Button
-                          key={index}
-                          variant="outline"
-                          size="sm"
-                          className="w-full justify-start text-primary hover:text-primary/80 text-left"
-                          onClick={() => setPreviewDoc(doc)}
-                        >
-                          {doc.label}
-                        </Button>
-                      ))}
-                    </div>
-                  ) : (
-                    <SourcesLegacyContent
-                      sourcesMessage={sourcesMessage}
-                      visibleDocuments={visibleDocuments}
-                      setVisibleDocuments={setVisibleDocuments}
-                      markdownComponents={markdownComponents}
-                    />
-                  )}
-                </div>
-              </DialogContent>
-            </Dialog>
-
-            <PdfPreviewDialog
-              open={Boolean(previewDoc)}
-              onOpenChange={(open) => !open && setPreviewDoc(null)}
-              sourceDoc={previewDoc}
-            />
-          </div>
+        {/* PDF preview when user clicks a document name in the response (sources still parsed for __SOURCE_DOCS__) */}
+        {sender === "AGENT" && sourceDocs?.length > 0 && (
+          <PdfPreviewDialog
+            open={Boolean(previewDoc)}
+            onOpenChange={(open) => !open && setPreviewDoc(null)}
+            sourceDoc={previewDoc}
+          />
         )}
         {isStreaming && status && (
           <div className="flex items-center gap-2 px-3 py-2 text-xs duration-200 rounded-lg text-muted-foreground bg-muted/50 animate-in fade-in">
