@@ -89,6 +89,27 @@ def extract_text_from_pdf(file_content: bytes) -> str:
         return ""
 
 
+def extract_text_from_pdf_by_pages(file_content: bytes) -> List[Dict[str, Any]]:
+    """
+    Extract raw text from a PDF by page using PyPDF2.
+    Returns a list of {"page": 1-based page number, "text": "..."} for citations.
+    """
+    try:
+        reader = PdfReader(io.BytesIO(file_content))
+        pages = []
+        for i, page in enumerate(reader.pages, 1):
+            try:
+                page_text = page.extract_text() or ""
+                pages.append({"page": i, "text": page_text})
+            except Exception as e:
+                LOGGER.warning(f"PDF text extraction failed for page {i}: {e}")
+                pages.append({"page": i, "text": ""})
+        return pages
+    except Exception as e:
+        LOGGER.warning(f"PDF text extraction failed: {e}")
+        return []
+
+
 def extract_explicit_metadata_from_text(
     text: str,
     metadata_fields: Optional[List[str]] = None,
@@ -254,11 +275,13 @@ async def process_document_with_gemini(
 
         # Extract raw OCR text from the document
         raw_ocr_text = ""
+        raw_ocr_pages: List[Dict[str, Any]] = []
         if is_pdf:
-            # For PDFs, extract text using PyPDF2
+            # For PDFs, extract text using PyPDF2 (full text and by-page for citations)
             LOGGER.info("[Gemini] Extracting raw text from PDF using PyPDF2")
             raw_ocr_text = extract_text_from_pdf(file_content)
-            LOGGER.info(f"[Gemini] Extracted {len(raw_ocr_text)} characters from PDF")
+            raw_ocr_pages = extract_text_from_pdf_by_pages(file_content)
+            LOGGER.info(f"[Gemini] Extracted {len(raw_ocr_text)} characters from PDF ({len(raw_ocr_pages)} pages)")
         else:
             # For images, we'll get the text from Gemini's response
             LOGGER.info("[Gemini] Will extract OCR text from image via Gemini")
@@ -464,6 +487,7 @@ async def process_document_with_gemini(
             LOGGER.info(f"[Gemini] Extracted custom metadata fields: {list(extracted_metadata.keys())}")
              # Add raw OCR text to result
         result["raw_ocr_text"] = raw_ocr_text
+        result["raw_ocr_pages"] = raw_ocr_pages
         LOGGER.info(f"[Gemini] Total raw OCR text length: {len(raw_ocr_text)} characters")
 
         LOGGER.info(
