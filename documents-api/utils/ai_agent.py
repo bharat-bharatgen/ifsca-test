@@ -518,22 +518,17 @@ async def stream_chat_with_specific_document(
 
         LOGGER.info(f"✅ Streamed {chunk_count} chunks for document chat")
 
-        # Only append sources when AI actually found relevant info (not "not mentioned" etc.)
+        # Always append sources when a document was used (compulsory at bottom for every response)
         try:
-            from utils.source_relevance import response_indicates_not_found
-
-            if not response_indicates_not_found(full_response_text):
-                doc_url = document_url or (metadata or {}).get("documentUrl")
-                doc_title = (metadata or {}).get("title") or "Document"
-                source_docs = [{"id": document_id, "url": doc_url or "", "label": doc_title}]
-                sources_block = (
-                    "\n\n---\n\nSources:\n__SOURCE_DOCS__: "
-                    + json.dumps(source_docs, ensure_ascii=False)
-                    + "\n"
-                )
-                yield {"type": "content", "text": sources_block}
-            else:
-                LOGGER.info("Skipping sources - AI indicated nothing relevant was found")
+            doc_url = document_url or (metadata or {}).get("documentUrl")
+            doc_title = (metadata or {}).get("title") or "Document"
+            source_docs = [{"id": document_id, "url": doc_url or "", "label": doc_title}]
+            sources_block = (
+                "\n\n---\n\nSources:\n__SOURCE_DOCS__: "
+                + json.dumps(source_docs, ensure_ascii=False)
+                + "\n"
+            )
+            yield {"type": "content", "text": sources_block}
         except Exception as e:
             LOGGER.warning(f"Failed to append source docs for document chat: {e}")
 
@@ -858,12 +853,19 @@ Document Metadata:
         yield {"type": "status", "message": "Building AI prompt..."}
         
         try:
-            prompt = PROMPTS.get_prompt("chat_with_multiple_documents").format(
+            template = PROMPTS.get_prompt("chat_with_multiple_documents")
+            if not template:
+                raise ValueError("get_prompt returned empty string")
+            prompt = template.format(
                 query=query,
                 documents_context=documents_context,
             )
         except Exception as e:
-            LOGGER.warning(f"Failed to load prompt template, using fallback: {e}")
+            LOGGER.warning(
+                "Failed to load prompt template, using fallback: %s",
+                e,
+                exc_info=True,
+            )
             prompt = f"""You are OutRiskAI's legal document assistant.
 Analyze the following documents and answer the user's query precisely.
 
@@ -955,11 +957,9 @@ Instructions:
         except (ValueError, json.JSONDecodeError) as e:
             LOGGER.debug(f"Could not parse __CITATIONS__ from response: {e}")
 
-        # Only append sources when AI actually found relevant info (not "not mentioned" etc.)
+        # Always append sources when documents were used (compulsory at bottom for every response)
         try:
-            from utils.source_relevance import response_indicates_not_found
-
-            if documents and not response_indicates_not_found(full_response_text):
+            if documents:
                 source_docs = []
                 for doc in documents:
                     doc_id = doc.get("document_id", "")
@@ -991,8 +991,6 @@ Instructions:
                         + "\n"
                     )
                     yield {"type": "content", "text": sources_block}
-            elif documents and response_indicates_not_found(full_response_text):
-                LOGGER.info("Skipping sources - AI indicated nothing relevant was found")
         except Exception as e:
             LOGGER.warning(f"Failed to append source docs for multi-doc chat: {e}")
 

@@ -102,6 +102,64 @@ export function stripCitationsBlock(text) {
 }
 
 /**
+ * Section headers that start a "trailing" block we strip (so only compulsory bottom Sources show).
+ * Only meta/source blocks (not in-body "Purpose:" or "Disbursement:"). Case-insensitive, optional space after colon.
+ */
+const TRAILING_SECTION_HEADERS =
+  "Sources|Citations|Source Details|Document|Location|Reference|Additional Context|Grant Description|Disbursement Milestones";
+
+/** Regex: newline(s) + header name + ": " or ":" + optional space + newline */
+const TRAILING_BLOCK_REGEX = new RegExp(
+  `\\n(?:\\n)?(${TRAILING_SECTION_HEADERS}):\\s*\\n`,
+  "gi"
+);
+
+/**
+ * Strip trailing "Sources:", "Citations:", "Source Details:", "Document:", "Reference:", etc.
+ * from message so only the compulsory bottom Sources list is shown. Uses regex to catch all
+ * common section headers (case-insensitive, optional space after colon).
+ * @param {string} text - The message content
+ * @param {boolean} [debug=false] - If true, log strip details to console
+ * @returns {string} - Message with trailing block removed
+ */
+export function stripTrailingSourcesOrCitationsBlock(text, debug = false) {
+  if (typeof text !== "string") return text;
+  const lenBefore = text.length;
+  let cutFrom = text.length;
+  const matches = [];
+  let match;
+  TRAILING_BLOCK_REGEX.lastIndex = 0;
+  while ((match = TRAILING_BLOCK_REGEX.exec(text)) !== null) {
+    cutFrom = Math.min(cutFrom, match.index);
+    matches.push({ header: match[1], index: match.index });
+  }
+  if (cutFrom >= text.length) {
+    if (debug && matches.length === 0)
+      console.debug("[Chat strip] No trailing section headers found, message length:", lenBefore);
+    return text;
+  }
+  const out = text.slice(0, cutFrom).replace(/\n{2,}$/, "\n").trimEnd();
+  if (debug) {
+    console.debug(
+      "[Chat strip] Stripped trailing block:",
+      "matches=",
+      matches.length,
+      "headers=",
+      matches.map((m) => m.header),
+      "cutFrom=",
+      cutFrom,
+      "lenBefore=",
+      lenBefore,
+      "lenAfter=",
+      out.length,
+      "removedPreview=",
+      text.slice(cutFrom, cutFrom + 80).replace(/\n/g, " "),
+    );
+  }
+  return out;
+}
+
+/**
  * Parse __SOURCE_DOCS__ JSON array from message (new format with id, url, label, citations?).
  * @param {string} message - The message content to parse
  * @returns {Array<{id: string, url: string, label: string, citations?: Array<{page?: number, excerpt?: string}>}>|null} - Source docs or null if not found

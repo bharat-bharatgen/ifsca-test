@@ -17,7 +17,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { parseDocumentEntries, parseSourceDocs, stripCitationsBlock, injectDocumentLinks } from "@/lib/chat-utils";
+import { parseDocumentEntries, parseSourceDocs, stripCitationsBlock, stripTrailingSourcesOrCitationsBlock } from "@/lib/chat-utils";
 import { PdfPreviewDialog } from "@/components/pdf-preview-dialog";
 import { DOCUMENT_FORMATTING } from "@/lib/document-formatting";
 import { getDocumentMarkdownComponents } from "@/lib/markdown";
@@ -1037,17 +1037,15 @@ function ChatMessage({
   }
 
   const sourceDocs = sourcesMessage ? parseSourceDocs(sourcesMessage) : null;
-  const messageWithDocLinks =
-    sender === "AGENT" && sourceDocs?.length
-      ? injectDocumentLinks(mainMessage, sourceDocs)
-      : mainMessage;
-  const componentsForMessage =
-    sender === "AGENT" && sourceDocs?.length
-      ? getDocumentMarkdownComponents(DOCUMENT_FORMATTING, {
-          sourceDocs,
-          onDocClick: setPreviewDoc,
-        })
-      : markdownComponents;
+  // When we have sourceDocs, strip in-body "Sources:" / "Citations:" so only the compulsory bottom list shows
+  const stripDebug =
+    typeof process !== "undefined" && process.env.NODE_ENV === "development";
+  if (sender === "AGENT" && sourceDocs?.length && typeof mainMessage === "string") {
+    mainMessage = stripTrailingSourcesOrCitationsBlock(mainMessage, stripDebug);
+  }
+  // Show links only in the compulsory Sources section at bottom; no inline doc links in the response body
+  const messageWithDocLinks = mainMessage;
+  const componentsForMessage = markdownComponents;
 
   // Parse document entries for AGENT messages (used for pure document lists)
   const parsed =
@@ -1163,6 +1161,47 @@ function ChatMessage({
               {/* Streaming cursor when content is being added */}
               {isStreaming && mainMessage && (
                 <span className="inline-block w-0.5 h-4 ml-0.5 bg-primary animate-pulse" />
+              )}
+              {/* Compulsory Sources section at bottom when source docs are present */}
+              {!isStreaming && sender === "AGENT" && sourceDocs?.length > 0 && (
+                <div className="mt-4 pt-3 border-t border-border/50">
+                  <p className="text-xs font-semibold text-muted-foreground mb-3">Sources:</p>
+                  <ul className="list-none space-y-3 text-xs">
+                    {sourceDocs.map((doc, idx) => {
+                      const label = doc?.label || `Document ${idx + 1}`;
+                      const citations = doc?.citations ?? [];
+                      const pages = [
+                        ...new Set(
+                          citations
+                            .map((c) => (c?.page != null ? c.page : null))
+                            .filter((p) => p != null),
+                        ),
+                      ].sort((a, b) => a - b);
+                      const firstCitation = citations[0];
+                      const excerptPart =
+                        firstCitation?.excerpt?.trim() || null;
+                      const pagePrefix =
+                        pages.length > 0
+                          ? pages.length === 1
+                            ? `Page ${pages[0]}: `
+                            : `Pages ${pages.join(", ")}: `
+                          : "";
+                      return (
+                        <li key={doc?.id ?? idx} className="text-muted-foreground">
+                          {pagePrefix}
+                          <button
+                            type="button"
+                            className="text-primary underline font-medium hover:text-primary/80 cursor-pointer bg-transparent border-none p-0 align-baseline"
+                            onClick={() => setPreviewDoc(doc)}
+                          >
+                            {label}
+                          </button>
+                          {excerptPart ? `, ${excerptPart}` : null}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
               )}
             </div>
             {timestamp && !isStreaming && (
