@@ -586,6 +586,10 @@ def process_file(
     # Add latency column
     if 'latency' not in df.columns:
         df['latency'] = 0.0
+
+    # Add citation column (Yes/No - whether response contains __SOURCE_DOCS__)
+    if 'citation' not in df.columns:
+        df['citation'] = ""
     
     # Check LIMIT from environment variable
     limit_str = os.getenv("LIMIT", "all").lower()
@@ -647,10 +651,12 @@ def process_file(
             conversation_id = chat_result["conversationId"]
             
             df.at[idx, actual_col] = actual_answer
+            df.at[idx, "citation"] = "Yes" if "__SOURCE_DOCS__" in actual_answer else "No"
             print_status(f"   ✅ Received response ({len(actual_answer)} chars) in {chat_result['latency']}s", "success")
             print(f"   A: {actual_answer[:150]}{'...' if len(actual_answer) > 150 else ''}")
         else:
             df.at[idx, actual_col] = f"ERROR: {chat_result['error']}"
+            df.at[idx, "citation"] = "No"
             print_status(f"   ❌ Error: {chat_result['error']}", "error")
         
         # Delay to avoid rate limiting
@@ -733,11 +739,13 @@ def process_file(
         evaluated_responses = model_df[model_df['eval_score'] > 0]
         
         summary_stats = []
+        citation_count = (model_df["citation"] == "Yes").sum()
         summary_stats.append(f"Evaluation Model: {model}")
         summary_stats.append(f"Total Questions: {len(model_df)}")
         summary_stats.append(f"Processed Questions: {processed_count}")
         summary_stats.append(f"Successful Responses: {len(successful_responses)}")
         summary_stats.append(f"Evaluated Responses: {len(evaluated_responses)}")
+        summary_stats.append(f"Responses with Citation: {citation_count}")
         
         if len(successful_responses) > 0:
             avg_latency = successful_responses['latency'].mean()
