@@ -4,7 +4,7 @@ import logging
 import os
 import re
 import asyncio
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 
 from google import genai
 from google.genai import types
@@ -725,6 +725,7 @@ Instructions:
 async def stream_chat_with_multiple_documents(
     documents: list[Dict[str, Any]],
     query: str,
+    previous_chats: str = "",
 ):
     """
     Async Generator function that streams status updates and content chunks for multi-document chat.
@@ -800,6 +801,21 @@ Document Metadata:
 
         documents_context = "\n".join(documents_context_parts)
 
+        # Build a context-aware query when we have conversation history.
+        # We keep the latest user question separate but let the model see a short
+        # window of the prior turns so that follow-ups like "and for sandbox grant?"
+        # are grounded in what was asked/answered earlier.
+        clean_query = (query or "").strip()
+        contextual_query = clean_query
+        if previous_chats:
+            history_lines = previous_chats.strip().splitlines()
+            trimmed_history = "\n".join(history_lines[-20:])
+            contextual_query = (
+                "Conversation so far:\n"
+                f"{trimmed_history}\n\n"
+                f"User's latest question: {clean_query}"
+            )
+
         # Collect documents with URLs for file attachment (optional feature)
         docs_with_urls = [
             (i, doc.get("metadata", {}).get("title") or f"Document {i}", doc.get("document_url"))
@@ -859,7 +875,7 @@ Document Metadata:
             if not template:
                 raise ValueError("get_prompt returned empty string")
             prompt = template.format(
-                query=query,
+                query=contextual_query,
                 documents_context=documents_context,
             )
         except Exception as e:
@@ -871,7 +887,7 @@ Document Metadata:
             prompt = f"""You are OutRiskAI's legal document assistant.
 Analyze the following documents and answer the user's query precisely.
 
-User Query: {query}
+User Query: {clean_query}
 
 {documents_context}
 

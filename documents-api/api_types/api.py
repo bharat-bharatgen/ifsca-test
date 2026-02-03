@@ -64,3 +64,5 @@ class MultiDocumentItem(BaseModel):
 class MultiDocumentChatRequest(BaseModel):
     query: str
     documents: List[MultiDocumentItem]  # Up to 3 documents
+    # Optional conversational history as newline-separated "User: ..."/"Assistant: ..." lines
+    previous_chats: Optional[str] = None
