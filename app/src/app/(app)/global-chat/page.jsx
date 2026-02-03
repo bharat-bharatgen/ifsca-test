@@ -40,6 +40,7 @@ export default function GlobalChatPage() {
   const [renameTitle, setRenameTitle] = useState("");
   const scrollAreaRef = useRef(null);
   const [refreshSignal, setRefreshSignal] = useState(0);
+  const sendLockRef = useRef(false);
 
   // State for the mobile menu sheet
   const [isSheetOpen, setIsSheetOpen] = useState(false);
@@ -149,10 +150,13 @@ export default function GlobalChatPage() {
 
         // Merge with existing messages, filtering out temporary user messages that have been replaced
         setMessages((prevMessages) => {
-          // Keep only non-temporary messages (those with database IDs, not starting with 'user-')
-          const nonTemporaryMessages = prevMessages.filter(
-            (msg) => !msg.id.startsWith("user-"),
-          );
+          // Keep only non-temporary messages (strip optimistic ones once DB data arrives)
+          const nonTemporaryMessages = prevMessages.filter((msg) => {
+            if (msg.id.startsWith("user-")) return false;
+            if (msg.id.startsWith("assistant-") && !msg.isStreaming)
+              return false;
+            return true;
+          });
 
           // Add new messages from database that aren't already present
           const existingIds = new Set(nonTemporaryMessages.map((m) => m.id));
@@ -225,6 +229,8 @@ export default function GlobalChatPage() {
     const messageToSend = isLoadMore ? lastQuery : inputMessage;
 
     if (!messageToSend.trim() || isLoading || isLoadingMoreDocs) return;
+    if (sendLockRef.current) return;
+    sendLockRef.current = true;
 
     // For new messages, create user message; for load more, skip user message
     if (!isLoadMore) {
@@ -463,6 +469,7 @@ export default function GlobalChatPage() {
     } finally {
       setIsLoading(false);
       setIsLoadingMoreDocs(false);
+      sendLockRef.current = false;
     }
   };
 
