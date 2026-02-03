@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import json
 import logging
 import typing
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 import requests
 import uvicorn
@@ -57,6 +57,27 @@ app.add_middleware(
 )
 
 RequestResponseEndpoint = typing.Callable[[Request], typing.Awaitable[Response]]
+
+
+def _normalize_previous_chats(previous_chats: typing.Any) -> str:
+    if not previous_chats:
+        return ""
+    if isinstance(previous_chats, str):
+        return previous_chats
+    if isinstance(previous_chats, list):
+        lines: List[str] = []
+        for item in previous_chats:
+            try:
+                sender = item.sender if hasattr(item, "sender") else item.get("sender")
+                message = item.message if hasattr(item, "message") else item.get("message")
+            except Exception:
+                sender = ""
+                message = ""
+            if message:
+                label = "User" if str(sender).upper() == "USER" else "Assistant"
+                lines.append(f"{label}: {message}")
+        return "\n".join(lines)
+    return str(previous_chats)
 
 
 # =============================================================================
@@ -204,6 +225,8 @@ async def chat_with_document_endpoint(data: DocumentChatRequest):
 
         mentioned_docs_data = _prepare_mentioned_documents(data.mentioned_documents)
 
+        previous_chats = _normalize_previous_chats(data.previous_chats)
+
         async def generate():
             try:
                 # Use the streaming generator
@@ -215,7 +238,7 @@ async def chat_with_document_endpoint(data: DocumentChatRequest):
                     metadata=data.metadata or {},
                     query=data.query,
                     document_url=(data.metadata or {}).get("documentUrl"),
-                    previous_chats="",
+                    previous_chats=previous_chats,
                     mentioned_documents=mentioned_docs_data,
                 )
 
@@ -282,8 +305,7 @@ async def chat_with_multi_docs_endpoint(data: MultiDocumentChatRequest):
                 status_code=400, detail="No valid documents with text provided"
             )
 
-        # Optional conversation history (newline-separated "User: ..."/"Assistant: ..." lines)
-        previous_chats = data.previous_chats or ""
+        previous_chats = _normalize_previous_chats(data.previous_chats)
 
         async def generate():
             try:

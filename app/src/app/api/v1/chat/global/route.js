@@ -109,20 +109,30 @@ export const POST = async (req) => {
           encoder.encode("__STATUS__:Searching documents...\n"),
         );
 
-        // Build previous chats summary
+        // Build previous chats summary (exclude current user message + strip control markers)
         const recent = await prisma.aiChat.findMany({
           where: { conversationId: convId },
           orderBy: { createdAt: "desc" },
           take: 20,
           select: { sender: true, message: true },
         });
+        const historyMaxChars = 4000;
+        const controlMarkerRegex =
+          /__TOKEN_USAGE__:[^\n]*\n?|__STATUS__:[^\n]*\n?|__PAGINATION__:[^\n]*\n?|__SOURCE_DOCS__:[^\n]*\n?/g;
         const previous_chats = recent
+          .filter((_, idx) => idx !== 0)
           .reverse()
           .map(
             (m) =>
-              `${m.sender === "USER" ? "User" : "Assistant"}: ${m.message}`,
+              `${m.sender === "USER" ? "User" : "Assistant"}: ${(
+                m.message || ""
+              )
+                .replace(controlMarkerRegex, "")
+                .replace(/\n?Sources:\n?/g, "")
+                .trim()}`,
           )
-          .join("\n");
+          .join("\n")
+          .slice(-historyMaxChars);
 
         // Parse @ mentions from the message
         const mentionPattern = /@([^\s@]+(?:\s+[^\s@]+)*)/g;
@@ -196,6 +206,7 @@ export const POST = async (req) => {
               documentNumber: targetDocument.documentNumber || "",
               documentNumberLabel: targetDocument.documentNumberLabel || "",
             },
+            previous_chats,
             mentioned_documents: [],
           };
 
@@ -272,6 +283,7 @@ export const POST = async (req) => {
                         documentNumberLabel:
                           targetDocument.documentNumberLabel || "",
                       },
+                      previous_chats,
                       mentioned_documents: [],
                     };
 
@@ -346,7 +358,6 @@ export const POST = async (req) => {
                         body: JSON.stringify({
                           query: message,
                           documents: matchedDocuments,
-                          // Pass recent conversation so multi-doc chat can handle follow-ups
                           previous_chats,
                         }),
                       },

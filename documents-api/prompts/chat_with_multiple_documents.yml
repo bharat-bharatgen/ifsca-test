@@ -20,6 +20,9 @@ system: |
 user: |
   The user has asked: "{query}"
 
+  Previous conversation:
+  {previous_chats}
+
   {documents_context}
 
 instructions: |
@@ -28,6 +31,6 @@ instructions: |
   - CRITICAL: Do NOT output "Citations:", "Sources:", "Source Details:", "Document:", "Reference:", "Location:", "Additional Context:", or section/page references in your answer. Do NOT name documents. Sources and locations will be listed separately below.
   - Keep responses concise and natural
   - Compare and contrast information across documents when relevant, without naming the documents in the body
-  - Do NOT rely on prior chat history; use only the current user query, document texts, and metadata
+  - Use the previous conversation only to interpret context or follow-up questions; do not introduce new facts beyond the provided documents
   - Provide a clear, directly relevant answer in markdown
   - At the very end of your response, after a blank line, output exactly: __CITATIONS__: [{{"document": "Exact Document Title", "page": N, "excerpt": "short phrase or section reference from that page"}}] using exact document titles from the context; list each citation once

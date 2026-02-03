@@ -316,6 +316,7 @@ def chat_with_specific_document(
             metadata=json.dumps(safe_metadata, indent=2, ensure_ascii=False),
             title=(safe_metadata.get("title") or "this document"),
             mentioned_context=mentioned_context,
+            previous_chats=previous_chats or "No previous conversation.",
         )
 
         prompt_parts = [prompt]
@@ -461,6 +462,7 @@ async def stream_chat_with_specific_document(
             metadata=json.dumps(safe_metadata, indent=2, ensure_ascii=False),
             title=(safe_metadata.get("title") or "this document"),
             mentioned_context=mentioned_context,
+            previous_chats=previous_chats or "No previous conversation.",
         )
 
         prompt_parts = [prompt]
@@ -551,6 +553,7 @@ async def stream_chat_with_specific_document(
 def chat_with_multiple_documents(
     documents: list[Dict[str, Any]],
     query: str,
+    previous_chats: str = "",
 ) -> Dict[str, Any]:
     """
     Chat with multiple documents (up to 3) using Gemini, guided by chat_with_multiple_documents prompt.
@@ -644,12 +647,16 @@ Document Metadata:
         prompt = PROMPTS.get_prompt("chat_with_multiple_documents").format(
             query=query,
             documents_context=documents_context,
+            previous_chats=previous_chats or "No previous conversation.",
         )
 
         # If prompt template not found, use a fallback
         if not prompt or prompt == query:
             prompt = f"""You are OutRiskAI's legal document assistant.
 Analyze the following documents and answer the user's query precisely.
+
+Previous conversation:
+{previous_chats or "No previous conversation."}
 
 User Query: {query}
 
@@ -801,10 +808,6 @@ Document Metadata:
 
         documents_context = "\n".join(documents_context_parts)
 
-        # Build a context-aware query when we have conversation history.
-        # We keep the latest user question separate but let the model see a short
-        # window of the prior turns so that follow-ups like "and for sandbox grant?"
-        # are grounded in what was asked/answered earlier.
         clean_query = (query or "").strip()
         contextual_query = clean_query
         if previous_chats:
@@ -877,6 +880,7 @@ Document Metadata:
             prompt = template.format(
                 query=contextual_query,
                 documents_context=documents_context,
+                previous_chats=previous_chats or "No previous conversation.",
             )
         except Exception as e:
             LOGGER.warning(
@@ -887,7 +891,10 @@ Document Metadata:
             prompt = f"""You are OutRiskAI's legal document assistant.
 Analyze the following documents and answer the user's query precisely.
 
-User Query: {clean_query}
+Previous conversation:
+{previous_chats or "No previous conversation."}
+
+User Query: {query}
 
 {documents_context}
 
