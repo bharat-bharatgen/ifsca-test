@@ -8,6 +8,7 @@ from typing import Dict, Any, Tuple
 
 from google import genai
 from google.genai import types
+import google.generativeai as ggenai
 import imghdr
 import requests
 from dotenv import load_dotenv
@@ -24,6 +25,7 @@ load_dotenv()
 
 # Initialize Gemini client
 gemini_client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+ggenai.configure(api_key=os.getenv("GOOGLE_API_KEY"), transport="rest")
 
 # Maximum number of characters to include from each mentioned document's text
 MAX_MENTIONED_DOC_TEXT_LENGTH = 5000  # Reduced for faster processing
@@ -139,7 +141,7 @@ def _call_gemini_for_language_detection(detection_prompt: str) -> Any:
     Helper function to call Gemini API for language detection with retry logic.
     (Used when provider is GEMINI)
     """
-    model = genai.GenerativeModel(GEMINI_MODEL_NAME)
+    model = ggenai.GenerativeModel(GEMINI_MODEL_NAME)
     response = model.generate_content(
         detection_prompt,
         generation_config={
@@ -157,7 +159,7 @@ def _call_gemini_for_translation(translation_prompt: str) -> Any:
     Helper function to call Gemini API for translation with retry logic.
     (Used when provider is GEMINI)
     """
-    model = genai.GenerativeModel(GEMINI_MODEL_NAME)
+    model = ggenai.GenerativeModel(GEMINI_MODEL_NAME)
     response = model.generate_content(
         translation_prompt,
         generation_config={
@@ -175,7 +177,7 @@ def _call_gemini_for_chat(prompt_parts: list, generation_config: dict) -> Any:
     Helper function to call Gemini API for chat with retry logic.
     (Used when provider is GEMINI)
     """
-    model = genai.GenerativeModel(
+    model = ggenai.GenerativeModel(
         GEMINI_MODEL_NAME, generation_config=generation_config
     )
     response = model.generate_content(contents=prompt_parts)
@@ -274,7 +276,7 @@ def chat_with_specific_document(
             "max_output_tokens": 8192,
         }
 
-        model = genai.GenerativeModel(
+        model = ggenai.GenerativeModel(
             GEMINI_MODEL_NAME, generation_config=generation_config
         )
 
@@ -414,7 +416,7 @@ async def stream_chat_with_specific_document(
         }
 
         # Initialize model
-        model = genai.GenerativeModel(
+        model = ggenai.GenerativeModel(
             GEMINI_MODEL_NAME, generation_config=generation_config
         )
 
@@ -582,7 +584,7 @@ def chat_with_multiple_documents(
             "max_output_tokens": 8192,
         }
 
-        model = genai.GenerativeModel(
+        model = ggenai.GenerativeModel(
             GEMINI_MODEL_NAME, generation_config=generation_config
         )
 
