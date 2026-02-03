@@ -282,6 +282,9 @@ async def chat_with_multi_docs_endpoint(data: MultiDocumentChatRequest):
                 status_code=400, detail="No valid documents with text provided"
             )
 
+        # Optional conversation history (newline-separated "User: ..."/"Assistant: ..." lines)
+        previous_chats = data.previous_chats or ""
+
         async def generate():
             try:
                 # Use the streaming generator
@@ -290,6 +293,7 @@ async def chat_with_multi_docs_endpoint(data: MultiDocumentChatRequest):
                 stream_gen = stream_chat_with_multiple_documents(
                     documents=documents_data,
                     query=data.query,
+                    previous_chats=previous_chats,
                 )
 
                 # Iterate over the async generator

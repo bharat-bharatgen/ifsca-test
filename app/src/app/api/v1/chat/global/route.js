@@ -346,6 +346,8 @@ export const POST = async (req) => {
                         body: JSON.stringify({
                           query: message,
                           documents: matchedDocuments,
+                          // Pass recent conversation so multi-doc chat can handle follow-ups
+                          previous_chats,
                         }),
                       },
                     );
