@@ -59,6 +59,23 @@ export default function GlobalChatPage() {
   const [isLoadingMoreDocs, setIsLoadingMoreDocs] = useState(false);
   const [lastQuery, setLastQuery] = useState(""); // Store last query for pagination
 
+  const normalizeMessageContent = (content) =>
+    (content || "").replace(/\s+/g, " ").trim();
+
+  const isTempMessage = (msg) =>
+    msg?.id?.startsWith("user-") || msg?.id?.startsWith("assistant-");
+
+  const isSameMessage = (a, b) => {
+    if (!a || !b) return false;
+    if (a.role !== b.role) return false;
+    const aText = normalizeMessageContent(a.content);
+    const bText = normalizeMessageContent(b.content);
+    if (!aText || !bText || aText !== bText) return false;
+    const aTime = new Date(a.timestamp || 0).getTime();
+    const bTime = new Date(b.timestamp || 0).getTime();
+    return Math.abs(aTime - bTime) <= 15000;
+  };
+
   const handleRefresh = () => {
     setRefreshSignal((prev) => prev + 1);
   };
@@ -149,21 +166,28 @@ export default function GlobalChatPage() {
         // API returns desc; render asc
         const mappedAsc = mappedDesc.slice().reverse();
 
-        // Merge with existing messages, filtering out temporary user messages that have been replaced
+        // Merge with existing messages, filtering out temporary messages that have DB equivalents
         setMessages((prevMessages) => {
-          // Keep only non-temporary messages (strip optimistic ones once DB data arrives)
-          const nonTemporaryMessages = prevMessages.filter((msg) => {
-            if (msg.id.startsWith("user-")) return false;
-            if (msg.id.startsWith("assistant-") && !msg.isStreaming)
-              return false;
-            return true;
+          const streamingMessages = prevMessages.filter((m) => m.isStreaming);
+
+          // Skip DB messages that would duplicate an in-flight streaming message
+          const dbMessagesFiltered = mappedAsc.filter(
+            (dbMsg) => !streamingMessages.some((sm) => isSameMessage(sm, dbMsg)),
+          );
+
+          // Remove temporary messages that already exist in DB (after stream completes)
+          const prunedPrev = prevMessages.filter((msg) => {
+            if (!isTempMessage(msg)) return true;
+            if (msg.isStreaming) return true;
+            return !dbMessagesFiltered.some((dbMsg) => isSameMessage(msg, dbMsg));
           });
 
-          // Add new messages from database that aren't already present
-          const existingIds = new Set(nonTemporaryMessages.map((m) => m.id));
-          const newMessages = mappedAsc.filter((m) => !existingIds.has(m.id));
+          const existingIds = new Set(prunedPrev.map((m) => m.id));
+          const newMessages = dbMessagesFiltered.filter(
+            (m) => !existingIds.has(m.id),
+          );
 
-          return [...nonTemporaryMessages, ...newMessages];
+          return [...prunedPrev, ...newMessages];
         });
 
         setNextBefore(data.nextBefore || null);
@@ -206,11 +230,20 @@ export default function GlobalChatPage() {
         const mappedAsc = mappedDesc.slice().reverse();
         setMessages((prev) => {
           const allMessages = [...mappedAsc, ...prev];
-          const seen = new Set();
-          return allMessages.filter((msg) => {
-            if (seen.has(msg.id)) return false;
-            seen.add(msg.id);
+          const seenIds = new Set();
+          const deduped = allMessages.filter((msg) => {
+            if (seenIds.has(msg.id)) return false;
+            seenIds.add(msg.id);
             return true;
+          });
+
+          // Remove temp duplicates if DB versions exist in the merged list
+          return deduped.filter((msg) => {
+            if (!isTempMessage(msg)) return true;
+            if (msg.isStreaming) return true;
+            return !deduped.some(
+              (dbMsg) => !isTempMessage(dbMsg) && isSameMessage(msg, dbMsg),
+            );
           });
         });
         setNextBefore(data.nextBefore || null);
@@ -410,8 +443,8 @@ export default function GlobalChatPage() {
           console.error("Streaming error:", err);
         } finally {
           // Mark streaming as complete and attach pagination to this specific message
-          setMessages((prev) =>
-            prev.map((msg) =>
+          setMessages((prev) => {
+            const updated = prev.map((msg) =>
               msg.id === assistantMessageId
                 ? {
                   ...msg,
@@ -420,8 +453,17 @@ export default function GlobalChatPage() {
                   status: null,
                 }
                 : msg,
-            ),
-          );
+            );
+
+            // Remove any non-temp duplicates of the streamed message (can happen if history loads mid-stream)
+            const streamed = updated.find((m) => m.id === assistantMessageId);
+            if (!streamed) return updated;
+            return updated.filter((msg) => {
+              if (msg.id === assistantMessageId) return true;
+              if (isTempMessage(msg)) return true;
+              return !isSameMessage(msg, streamed);
+            });
+          });
 
           // Only update lastQuery after successful response (not on error)
           if (streamSuccess && !isLoadMore) {

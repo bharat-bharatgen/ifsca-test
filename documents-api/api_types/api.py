@@ -1,5 +1,5 @@
-from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from pydantic import BaseModel, Field
+from typing import Optional, List, Dict, Any, Union
 
 class ParseRequest(BaseModel):
     documentUrl: str
@@ -33,8 +33,8 @@ class DocumentChatRequest(BaseModel):
     document_text: str
     metadata: Dict[str, Any] = {}
     file_path: Optional[str] = None
-    previous_chats: List[ChatMessage] = []
-    mentioned_documents: List[MentionedDocument] = []  # Documents mentioned via @ in the query
+    previous_chats: Optional[Union[str, List[ChatMessage]]] = None
+    mentioned_documents: List[MentionedDocument] = Field(default_factory=list)  # Documents mentioned via @ in the query
 
 
 class GlobalChatRequest(BaseModel):
@@ -64,3 +64,4 @@ class MultiDocumentItem(BaseModel):
 class MultiDocumentChatRequest(BaseModel):
     query: str
     documents: List[MultiDocumentItem]  # Up to 3 documents
+    previous_chats: Optional[Union[str, List[ChatMessage]]] = None

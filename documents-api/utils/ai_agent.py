@@ -316,6 +316,7 @@ def chat_with_specific_document(
             metadata=json.dumps(safe_metadata, indent=2, ensure_ascii=False),
             title=(safe_metadata.get("title") or "this document"),
             mentioned_context=mentioned_context,
+            previous_chats=previous_chats or "No previous conversation.",
         )
 
         prompt_parts = [prompt]
@@ -461,6 +462,7 @@ async def stream_chat_with_specific_document(
             metadata=json.dumps(safe_metadata, indent=2, ensure_ascii=False),
             title=(safe_metadata.get("title") or "this document"),
             mentioned_context=mentioned_context,
+            previous_chats=previous_chats or "No previous conversation.",
         )
 
         prompt_parts = [prompt]
@@ -551,6 +553,7 @@ async def stream_chat_with_specific_document(
 def chat_with_multiple_documents(
     documents: list[Dict[str, Any]],
     query: str,
+    previous_chats: str = "",
 ) -> Dict[str, Any]:
     """
     Chat with multiple documents (up to 3) using Gemini, guided by chat_with_multiple_documents prompt.
@@ -644,12 +647,16 @@ Document Metadata:
         prompt = PROMPTS.get_prompt("chat_with_multiple_documents").format(
             query=query,
             documents_context=documents_context,
+            previous_chats=previous_chats or "No previous conversation.",
         )
 
         # If prompt template not found, use a fallback
         if not prompt or prompt == query:
             prompt = f"""You are OutRiskAI's legal document assistant.
 Analyze the following documents and answer the user's query precisely.
+
+Previous conversation:
+{previous_chats or "No previous conversation."}
 
 User Query: {query}
 
@@ -725,6 +732,7 @@ Instructions:
 async def stream_chat_with_multiple_documents(
     documents: list[Dict[str, Any]],
     query: str,
+    previous_chats: str = "",
 ):
     """
     Async Generator function that streams status updates and content chunks for multi-document chat.
@@ -861,6 +869,7 @@ Document Metadata:
             prompt = template.format(
                 query=query,
                 documents_context=documents_context,
+                previous_chats=previous_chats or "No previous conversation.",
             )
         except Exception as e:
             LOGGER.warning(
@@ -870,6 +879,9 @@ Document Metadata:
             )
             prompt = f"""You are OutRiskAI's legal document assistant.
 Analyze the following documents and answer the user's query precisely.
+
+Previous conversation:
+{previous_chats or "No previous conversation."}
 
 User Query: {query}
 

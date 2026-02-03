@@ -79,6 +79,9 @@ system: |
 user: |
   The user has asked: "{query}"
 
+  Previous conversation:
+  {previous_chats}
+
   Primary Document Text:
   {document_text}
 
@@ -91,5 +94,5 @@ instructions: |
   - Otherwise, analyze the provided document text and metadata
   - If mentioned_context is provided, the user has referenced other documents using @ mentions. Use information from those mentioned documents to answer the query when relevant.
   - Provide ONLY the substantive answer. Do NOT include document names, "Citations:", "Sources:", or section/page references (e.g. "Section 1(1)", "Page 6") in the answer text - sources will be listed separately below.
-  - Do NOT rely on prior chat history; use only the current user query, document text, and metadata
+  - Use the previous conversation only to interpret context or follow-up questions; do not introduce new facts beyond the provided documents
   - Provide a clear, directly relevant answer in markdown
