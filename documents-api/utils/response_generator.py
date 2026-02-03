@@ -168,19 +168,6 @@ def build_response_prompt(
         previous_chats: Previous conversation history
         pagination_context: Separate pagination info (not mixed with chat history)
     """
-    # Build document link instructions
-    link_instructions = "\n".join(
-        [
-            f'- "{title}": Use markdown link format [{title}](/documents/{doc_id}) when referencing it.'
-            for title, doc_id in document_map.items()
-        ]
-    )
-
-    # Get first document info for example
-    first_title = list(document_map.keys())[0] if document_map else "Document"
-    first_id = list(document_map.values())[0] if document_map else ""
-    first_doc_type = first_doc_metadata.get("type", "document")
-
     # Build pagination section separately from conversation history
     pagination_section = ""
     if pagination_context:
@@ -201,26 +188,15 @@ User Question: {query}
 
 Instructions:
 1. IMPORTANT: Since documents were found matching the search query, you MUST provide context about what was found, even if the exact query term isn't in the document text.
-2. Search through ALL available information:
-   - Document Title
-   - All Metadata fields (Type, Category, Document Number, Case Number, Application Number, Parties, etc.)
-   - Document Content/Text
-3. If the query term appears in ANY field (title, metadata, or content), mention where it was found and provide relevant context.
-4. If the query term doesn't appear in the text but documents were found, provide information about the found document(s) including:
-   - Document title and type
-   - Relevant metadata (case numbers, document numbers, parties, dates, etc.)
-   - A summary of what the document contains
-   - A link to view the document
-5. Always acknowledge that a document was found and provide useful context, even if the exact query term isn't in the content.
-6. Be concise and accurate.
-7. If multiple documents are relevant, synthesize the information.
-8. When referencing documents, ALWAYS use the document's TITLE (not "Document 1", "Document 2", etc.) and include clickable links using markdown format: [Document Title](/documents/DOCUMENT_ID)
-9. Use the following document titles and IDs for links:
-{link_instructions}
-10. Example: "I found [{first_title}](/documents/{first_id}) which is a {first_doc_type}. According to the metadata..."
-11. Make sure every document reference uses the document's actual title and includes a clickable link.
-12. NEVER use generic terms like "Document 1" or "Document 2" - always use the actual document title.
-13. NEVER say "I couldn't find information" if documents were provided - instead, describe what was found in the documents.
+2. Search through ALL available information (Document Title, Metadata, Content/Text) and synthesize the answer.
+3. CRITICAL - Your answer must contain ONLY the substantive answer. Do NOT output any of the following in your response:
+   - Document names, file titles, or "According to [document name]"
+   - Lines or blocks starting with: "Citations:", "Sources:", "Source Details:", "Document:", "Reference:", "Location:", "Additional Context:", "Grant Description:", "Disbursement Milestones:"
+   - Page numbers, section references (e.g. "Section 1(1)", "Page 6"), or location references
+   Sources and their locations will be listed automatically below your answer.
+4. If multiple documents are relevant, synthesize the information without naming the documents in the body.
+5. Be concise and accurate.
+6. NEVER say "I couldn't find information" if documents were provided - instead, describe what was found.
 
 Answer:"""
 
@@ -347,11 +323,13 @@ async def stream_response_from_documents(
         input_tokens = 0
         output_tokens = 0
         chunk_count = 0
+        full_response_text = ""
 
         # Use the configurable LLM client for streaming
         async for chunk in llm_client.stream_chat_completion(prompt, **generation_config):
             if chunk["type"] == "content":
                 chunk_count += 1
+                full_response_text += chunk["text"]
                 yield chunk["text"]
                 await asyncio.sleep(0)  # Small yield to ensure chunks are flushed
             elif chunk["type"] == "token_usage":
@@ -359,6 +337,37 @@ async def stream_response_from_documents(
                 output_tokens = chunk.get("output_tokens", 0)
 
         LOGGER.info(f"✅ Streamed {chunk_count} chunks for query")
+
+        # Always append sources when documents were used (compulsory at bottom for every response)
+        try:
+            if paginated_documents:
+                source_docs = []
+                for doc in paginated_documents:
+                    doc_id = doc.get("id", "")
+                    doc_url = (
+                        doc.get("metadata", {}).get("documentUrl")
+                        if isinstance(doc.get("metadata"), dict)
+                        else ""
+                    ) or doc.get("documentUrl", "")
+                    meta = doc.get("metadata") or {}
+                    doc_title = (
+                        doc.get("title")
+                        or (meta.get("title") if isinstance(meta, dict) else "")
+                        or doc.get("documentName", "")
+                        or "Document"
+                    )
+                    source_docs.append(
+                        {"id": doc_id, "url": doc_url or "", "label": doc_title}
+                    )
+                if source_docs:
+                    sources_block = (
+                        "\n\n---\n\nSources:\n__SOURCE_DOCS__: "
+                        + json.dumps(source_docs, ensure_ascii=False)
+                        + "\n"
+                    )
+                    yield sources_block
+        except Exception as e:
+            LOGGER.warning(f"Failed to append source docs for global-chat: {e}")
 
         # Consistent order: PAGINATION first, then TOKEN_USAGE
         yield (

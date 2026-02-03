@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { RefreshCcw, MoreHorizontal, Pencil, Trash, MenuIcon } from "lucide-react";
+import { ThemeToggle } from "@/components/custom/theme-toggle";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -47,7 +48,8 @@ export default function MobileConversationSidebar({
                       Conversations
                     </h2>
                   </div>
-                  <div className="text-end">
+                  <div className="flex items-center gap-2">
+                    <ThemeToggle />
                     <button onClick={onRefresh}>
                       <RefreshCcw className="h-5 w-5" />
                     </button>
@@ -71,11 +73,10 @@ export default function MobileConversationSidebar({
                     return (
                       <div key={c.id} className="px-2">
                         <div
-                          className={`group flex items-start gap-2 rounded-md px-2 py-2 ${
-                            isActive
+                          className={`group flex items-start gap-2 rounded-md px-2 py-2 ${isActive
                               ? "border border-gray-200 bg-gray-100 text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
                               : "text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800"
-                          }`}
+                            }`}
                           title={c.title || "Untitled conversation"}
                         >
                           <button
@@ -86,9 +87,8 @@ export default function MobileConversationSidebar({
                               {c.title || "Untitled conversation"}
                             </div>
                             <div
-                              className={`truncate text-xs ${
-                                isActive ? "text-gray-600" : "text-gray-500"
-                              }`}
+                              className={`truncate text-xs ${isActive ? "text-gray-600" : "text-gray-500"
+                                }`}
                             >
                               {new Date(
                                 c.lastMessageAt || c.createdAt

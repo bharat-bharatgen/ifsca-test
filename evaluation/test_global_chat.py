@@ -17,6 +17,7 @@ import os
 import sys
 import json
 import time
+import re
 import requests
 import pandas as pd
 from typing import Dict, Any, Optional
@@ -32,6 +33,15 @@ load_dotenv()
 API_BASE_URL = "http://localhost:3000"  # Your Next.js app URL
 GLOBAL_CHAT_ENDPOINT = "/api/v1/chat/global"
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")  # Set this in your environment
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")  # Set this in your environment
+
+# List of models to use for evaluation (supports both Gemini and OpenAI models)
+EVALUATION_MODELS = [
+    "gemini-2.0-flash",
+    "gemini-2.5-flash",
+    "gemini-3-flash-preview",
+    "gpt-4o-mini"
+]
 
 # Colors for terminal output
 class Colors:
@@ -129,7 +139,6 @@ def send_chat_message(session_token: str, message: str, conversation_id: Optiona
         elapsed_time = time.time() - start_time
         
         # Extract conversation ID from __CONV_ID__:xxx pattern
-        import re
         conv_match = re.search(r'__CONV_ID__:([^\n\s]+)', full_text)
         if conv_match:
             conv_id = conv_match.group(1)
@@ -160,21 +169,33 @@ def send_chat_message(session_token: str, message: str, conversation_id: Optiona
         }
 
 
-def evaluate_response_with_ai(question: str, expected: str, actual: str, gemini_api_key: str, max_retries: int = 3) -> Dict[str, Any]:
+def evaluate_response_with_ai(question: str, expected: str, actual: str, gemini_api_key: str, model: str = "gemini-2.0-flash", max_retries: int = 3, openai_api_key: str = "") -> Dict[str, Any]:
     """
-    Use Google Gemini to evaluate the actual response against the expected answer
+    Use AI (Gemini or OpenAI) to evaluate the actual response against the expected answer
     
     Args:
         question: The original question
         expected: Expected answer
         actual: Actual response from the system
         gemini_api_key: Google Gemini API key
+        model: Model to use for evaluation (supports gemini-* and gpt-* models)
         max_retries: Maximum number of retries for rate limiting (default: 3)
+        openai_api_key: OpenAI API key (required for gpt-* models)
     
     Returns:
         Dictionary with score (0-100) and evaluation reasoning
     """
-    if not gemini_api_key:
+    # Determine if this is an OpenAI model
+    is_openai = model.startswith("gpt-") or model.startswith("o1-") or model.startswith("o3-")
+    
+    if is_openai and not openai_api_key:
+        return {
+            "score": 0,
+            "reasoning": "OpenAI API key not provided. Cannot evaluate.",
+            "success": False
+        }
+    
+    if not is_openai and not gemini_api_key:
         return {
             "score": 0,
             "reasoning": "Gemini API key not provided. Cannot evaluate.",
@@ -207,8 +228,122 @@ Provide your evaluation in the following JSON format:
 
 Only return the JSON, no additional text."""
 
-    # Gemini API endpoint - using gemini-2.0-flash model
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gemini_api_key}"
+    # Route to appropriate API based on model
+    if is_openai:
+        return _evaluate_with_openai(evaluation_prompt, openai_api_key, model, max_retries)
+    else:
+        return _evaluate_with_gemini(evaluation_prompt, gemini_api_key, model, max_retries)
+
+
+def _evaluate_with_openai(evaluation_prompt: str, api_key: str, model: str, max_retries: int) -> Dict[str, Any]:
+    """Evaluate using OpenAI API"""
+    url = "https://api.openai.com/v1/chat/completions"
+    
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "You are an AI evaluator. Always respond with valid JSON only."},
+            {"role": "user", "content": evaluation_prompt}
+        ],
+        "temperature": 0.3,
+        "max_tokens": 1024,
+        "response_format": {"type": "json_object"}
+    }
+    
+    # Retry logic with exponential backoff
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=60
+            )
+            
+            # Handle rate limiting with retry
+            if response.status_code == 429:
+                if attempt < max_retries - 1:
+                    wait_time = (2 ** attempt) * 5
+                    print_status(f"   ⏳ Rate limited, waiting {wait_time}s before retry ({attempt + 1}/{max_retries})...", "warning")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    return {
+                        "score": 0,
+                        "reasoning": f"Rate limited after {max_retries} retries",
+                        "success": False
+                    }
+            
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            # Extract content from OpenAI response
+            if 'choices' in data and len(data['choices']) > 0:
+                content = data['choices'][0]['message']['content']
+                
+                # Parse JSON response
+                evaluation = None
+                try:
+                    evaluation = json.loads(content)
+                except json.JSONDecodeError:
+                    # Try to extract JSON from response
+                    json_match = re.search(r'\{[^{}]*"score"[^{}]*\}', content, re.DOTALL)
+                    if json_match:
+                        try:
+                            evaluation = json.loads(json_match.group())
+                        except json.JSONDecodeError:
+                            pass
+                
+                if evaluation:
+                    return {
+                        "score": evaluation.get("score", 0),
+                        "factual_accuracy": evaluation.get("factual_accuracy", 0),
+                        "completeness": evaluation.get("completeness", 0),
+                        "relevance": evaluation.get("relevance", 0),
+                        "clarity": evaluation.get("clarity", 0),
+                        "reasoning": evaluation.get("reasoning", ""),
+                        "success": True
+                    }
+                else:
+                    return {
+                        "score": 0,
+                        "reasoning": f"Could not parse JSON response: {content[:200]}",
+                        "success": False
+                    }
+            else:
+                return {
+                    "score": 0,
+                    "reasoning": "No valid response from OpenAI API",
+                    "success": False
+                }
+        except Exception as e:
+            if attempt < max_retries - 1:
+                wait_time = (2 ** attempt) * 5
+                print_status(f"   ⏳ Error occurred, waiting {wait_time}s before retry ({attempt + 1}/{max_retries})...", "warning")
+                time.sleep(wait_time)
+                continue
+            return {
+                "score": 0,
+                "reasoning": f"Error during evaluation: {str(e)}",
+                "success": False
+            }
+    
+    return {
+        "score": 0,
+        "reasoning": "All retries exhausted",
+        "success": False
+    }
+
+
+def _evaluate_with_gemini(evaluation_prompt: str, api_key: str, model: str, max_retries: int) -> Dict[str, Any]:
+    """Evaluate using Gemini API"""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
     
     headers = {
         "Content-Type": "application/json"
@@ -260,17 +395,70 @@ Only return the JSON, no additional text."""
             # Extract text from Gemini response
             if 'candidates' in data and len(data['candidates']) > 0:
                 content = data['candidates'][0]['content']['parts'][0]['text']
-                evaluation = json.loads(content)
                 
-                return {
-                    "score": evaluation.get("score", 0),
-                    "factual_accuracy": evaluation.get("factual_accuracy", 0),
-                    "completeness": evaluation.get("completeness", 0),
-                    "relevance": evaluation.get("relevance", 0),
-                    "clarity": evaluation.get("clarity", 0),
-                    "reasoning": evaluation.get("reasoning", ""),
-                    "success": True
-                }
+                # Try to parse JSON with multiple fallback methods
+                evaluation = None
+                
+                # Method 1: Direct JSON parse
+                try:
+                    evaluation = json.loads(content)
+                except json.JSONDecodeError:
+                    pass
+                
+                # Method 2: Fix common JSON issues (single quotes, trailing commas)
+                if evaluation is None:
+                    try:
+                        fixed_content = content
+                        # Remove any markdown code blocks
+                        fixed_content = re.sub(r'```json\s*', '', fixed_content)
+                        fixed_content = re.sub(r'```\s*', '', fixed_content)
+                        # Replace single quotes with double quotes (carefully)
+                        fixed_content = re.sub(r"'([^']*)':", r'"\1":', fixed_content)
+                        fixed_content = re.sub(r":\s*'([^']*)'", r': "\1"', fixed_content)
+                        # Remove trailing commas before } or ]
+                        fixed_content = re.sub(r',\s*([}\]])', r'\1', fixed_content)
+                        evaluation = json.loads(fixed_content)
+                    except json.JSONDecodeError:
+                        pass
+                
+                # Method 3: Extract JSON object using regex
+                if evaluation is None:
+                    try:
+                        json_match = re.search(r'\{[^{}]*"score"[^{}]*\}', content, re.DOTALL)
+                        if json_match:
+                            evaluation = json.loads(json_match.group())
+                    except json.JSONDecodeError:
+                        pass
+                
+                # Method 4: Try to extract score directly with regex as last resort
+                if evaluation is None:
+                    try:
+                        score_match = re.search(r'"score"\s*:\s*(\d+)', content)
+                        reasoning_match = re.search(r'"reasoning"\s*:\s*"([^"]*)"', content)
+                        if score_match:
+                            evaluation = {
+                                "score": int(score_match.group(1)),
+                                "reasoning": reasoning_match.group(1) if reasoning_match else "Extracted from malformed response"
+                            }
+                    except Exception:
+                        pass
+                
+                if evaluation:
+                    return {
+                        "score": evaluation.get("score", 0),
+                        "factual_accuracy": evaluation.get("factual_accuracy", 0),
+                        "completeness": evaluation.get("completeness", 0),
+                        "relevance": evaluation.get("relevance", 0),
+                        "clarity": evaluation.get("clarity", 0),
+                        "reasoning": evaluation.get("reasoning", ""),
+                        "success": True
+                    }
+                else:
+                    return {
+                        "score": 0,
+                        "reasoning": f"Could not parse JSON response: {content[:200]}",
+                        "success": False
+                    }
             else:
                 return {
                     "score": 0,
@@ -308,19 +496,26 @@ def process_file(
     file_path: str,
     session_token: str,
     gemini_api_key: str,
+    openai_api_key: str = "",
     output_path: Optional[str] = None,
-    delay_seconds: float = 1.0
+    delay_seconds: float = 1.0,
+    models: list = None
 ):
     """
-    Process the Excel or CSV file with questions and evaluate responses
+    Process the Excel or CSV file with questions and evaluate responses using multiple models
     
     Args:
         file_path: Path to the input Excel (.xlsx) or CSV (.csv) file
         session_token: NextAuth session token
         gemini_api_key: Google Gemini API key for evaluation
-        output_path: Optional path for output file (default: adds _results suffix)
+        openai_api_key: OpenAI API key for evaluation (required for gpt-* models)
+        output_path: Optional path for output file (only used for single model)
         delay_seconds: Delay between API calls to avoid rate limiting
+        models: List of models to use for evaluation (default: EVALUATION_MODELS)
     """
+    if models is None:
+        models = EVALUATION_MODELS
+    
     # Determine file type and read accordingly
     file_ext = Path(file_path).suffix.lower()
     print_status(f"\n📊 Reading {file_ext.upper()} file: {file_path}", "info")
@@ -388,15 +583,13 @@ def process_file(
         df[actual_col] = ""
         print_status(f"   Created new column: '{actual_col}'", "info")
     
-    # Add evaluation columns if they don't exist
-    if 'eval_score' not in df.columns:
-        df['eval_score'] = 0
-    if 'eval_reasoning' not in df.columns:
-        df['eval_reasoning'] = ""
-    
     # Add latency column
     if 'latency' not in df.columns:
         df['latency'] = 0.0
+
+    # Add citation column (Yes/No - whether response contains __SOURCE_DOCS__)
+    if 'citation' not in df.columns:
+        df['citation'] = ""
     
     # Check LIMIT from environment variable
     limit_str = os.getenv("LIMIT", "all").lower()
@@ -418,9 +611,16 @@ def process_file(
     
     print_status(f"✅ Found {len(df)} questions to process\n", "success")
     
-    # Process each question
+    # ========================================
+    # PHASE 1: Collect responses from chat API (runs once)
+    # ========================================
+    print_status("=" * 60, "header")
+    print_status("  PHASE 1: Collecting responses from Global Chat API", "header")
+    print_status("=" * 60, "header")
+    
     conversation_id = None  # Use single conversation for all questions
     processed_count = 0
+    processed_indices = []  # Track which indices were processed
     
     for idx, row in df.iterrows():
         # Check if we've reached the limit
@@ -429,13 +629,13 @@ def process_file(
             break
         
         question = str(row[questions_col]).strip()
-        expected = str(row[expected_col]).strip()
         
         if not question or question.lower() == 'nan':
             print_status(f"⏭️  Skipping row {idx + 1}: Empty question", "warning")
             continue
         
         processed_count += 1
+        processed_indices.append(idx)
         print_status(f"\n[{processed_count}/{questions_to_process}] Processing question:", "header")
         print(f"   Q: {question[:100]}{'...' if len(question) > 100 else ''}")
         
@@ -451,170 +651,186 @@ def process_file(
             conversation_id = chat_result["conversationId"]
             
             df.at[idx, actual_col] = actual_answer
+            df.at[idx, "citation"] = "Yes" if "__SOURCE_DOCS__" in actual_answer else "No"
             print_status(f"   ✅ Received response ({len(actual_answer)} chars) in {chat_result['latency']}s", "success")
             print(f"   A: {actual_answer[:150]}{'...' if len(actual_answer) > 150 else ''}")
-            
-            # Evaluate with AI
-            if expected and expected.lower() != 'nan':
-                print_status("   🎯 Evaluating response...", "info")
-                eval_result = evaluate_response_with_ai(question, expected, actual_answer, gemini_api_key)
-                
-                if eval_result["success"]:
-                    df.at[idx, 'eval_score'] = eval_result["score"]
-                    df.at[idx, 'eval_reasoning'] = eval_result["reasoning"]
-                    
-                    # Add detailed scores if available
-                    if 'factual_accuracy' in eval_result:
-                        df.at[idx, 'factual_accuracy'] = eval_result['factual_accuracy']
-                    if 'completeness' in eval_result:
-                        df.at[idx, 'completeness'] = eval_result['completeness']
-                    if 'relevance' in eval_result:
-                        df.at[idx, 'relevance'] = eval_result['relevance']
-                    if 'clarity' in eval_result:
-                        df.at[idx, 'clarity'] = eval_result['clarity']
-                    
-                    score = eval_result["score"]
-                    status = "success" if score >= 70 else "warning" if score >= 50 else "error"
-                    print_status(f"   📊 Score: {score}/100", status)
-                else:
-                    print_status(f"   ⚠️  Evaluation failed: {eval_result['reasoning']}", "warning")
-            else:
-                print_status("   ⏭️  No expected answer provided, skipping evaluation", "warning")
         else:
             df.at[idx, actual_col] = f"ERROR: {chat_result['error']}"
+            df.at[idx, "citation"] = "No"
             print_status(f"   ❌ Error: {chat_result['error']}", "error")
         
         # Delay to avoid rate limiting
         if processed_count < questions_to_process:  # Don't delay after last question
             time.sleep(delay_seconds)
     
-    # Calculate summary statistics for both CSV and console
-    successful_responses = df[
-        (df[actual_col].notna()) & 
-        (df[actual_col].astype(str).str.len() > 0) &
-        (~df[actual_col].astype(str).str.startswith('ERROR:'))
-    ]
-    evaluated_responses = df[df['eval_score'] > 0]
+    # ========================================
+    # PHASE 2: Evaluate with each model and save output files
+    # ========================================
+    print_status("\n" + "=" * 60, "header")
+    print_status("  PHASE 2: Evaluating responses with multiple models", "header")
+    print_status(f"  Models: {', '.join(models)}", "header")
+    print_status("=" * 60, "header")
     
-    summary_stats = []
-    summary_stats.append(f"Total Questions: {len(df)}")
-    summary_stats.append(f"Processed Questions: {processed_count}")
-    summary_stats.append(f"Successful Responses: {len(successful_responses)}")
-    summary_stats.append(f"Evaluated Responses: {len(evaluated_responses)}")
+    output_files = []
     
-    if len(successful_responses) > 0:
-        avg_latency = successful_responses['latency'].mean()
-        summary_stats.append(f"Average Latency: {avg_latency:.2f}s")
-    else:
-        summary_stats.append("Average Latency: N/A")
+    for model_idx, model in enumerate(models, 1):
+        print_status(f"\n{'─' * 60}", "info")
+        print_status(f"  Evaluating with Model {model_idx}/{len(models)}: {model}", "header")
+        print_status(f"{'─' * 60}", "info")
         
-    summary_stats.append("")  # Empty line
-    
-    if len(evaluated_responses) > 0:
-        avg_score = evaluated_responses['eval_score'].mean()
-        max_score = evaluated_responses['eval_score'].max()
-        min_score = evaluated_responses['eval_score'].min()
+        # Create a copy of the dataframe for this model's evaluation
+        model_df = df.copy()
         
-        summary_stats.append(f"Average Score: {avg_score:.1f}/100")
-        summary_stats.append(f"Highest Score: {max_score:.1f}/100")
-        summary_stats.append(f"Lowest Score: {min_score:.1f}/100")
+        # Add evaluation columns for this model
+        model_df['eval_score'] = 0
+        model_df['eval_reasoning'] = ""
+        model_df['factual_accuracy'] = 0
+        model_df['completeness'] = 0
+        model_df['relevance'] = 0
+        model_df['clarity'] = 0
         
+        # Evaluate each processed question
+        eval_count = 0
+        for idx in processed_indices:
+            question = str(model_df.at[idx, questions_col]).strip()
+            expected = str(model_df.at[idx, expected_col]).strip()
+            actual = str(model_df.at[idx, actual_col]).strip()
+            
+            # Skip if no actual answer or it's an error
+            if not actual or actual.startswith('ERROR:'):
+                continue
+            
+            eval_count += 1
+            print_status(f"   [{eval_count}/{len(processed_indices)}] Evaluating with {model}...", "info")
+            
+            # Evaluate with AI
+            if expected and expected.lower() != 'nan':
+                eval_result = evaluate_response_with_ai(question, expected, actual, gemini_api_key, model=model, openai_api_key=openai_api_key)
+                
+                if eval_result["success"]:
+                    model_df.at[idx, 'eval_score'] = eval_result["score"]
+                    model_df.at[idx, 'eval_reasoning'] = eval_result["reasoning"]
+                    
+                    # Add detailed scores if available
+                    if 'factual_accuracy' in eval_result:
+                        model_df.at[idx, 'factual_accuracy'] = eval_result['factual_accuracy']
+                    if 'completeness' in eval_result:
+                        model_df.at[idx, 'completeness'] = eval_result['completeness']
+                    if 'relevance' in eval_result:
+                        model_df.at[idx, 'relevance'] = eval_result['relevance']
+                    if 'clarity' in eval_result:
+                        model_df.at[idx, 'clarity'] = eval_result['clarity']
+                    
+                    score = eval_result["score"]
+                    status = "success" if score >= 70 else "warning" if score >= 50 else "error"
+                    print_status(f"      📊 Score: {score}/100", status)
+                else:
+                    print_status(f"      ⚠️  Evaluation failed: {eval_result['reasoning']}", "warning")
+            
+            # Small delay between evaluations to avoid rate limiting
+            time.sleep(0.5)
+        
+        # Calculate summary statistics
+        successful_responses = model_df[
+            (model_df[actual_col].notna()) & 
+            (model_df[actual_col].astype(str).str.len() > 0) &
+            (~model_df[actual_col].astype(str).str.startswith('ERROR:'))
+        ]
+        evaluated_responses = model_df[model_df['eval_score'] > 0]
+        
+        summary_stats = []
+        citation_count = (model_df["citation"] == "Yes").sum()
+        summary_stats.append(f"Evaluation Model: {model}")
+        summary_stats.append(f"Total Questions: {len(model_df)}")
+        summary_stats.append(f"Processed Questions: {processed_count}")
+        summary_stats.append(f"Successful Responses: {len(successful_responses)}")
+        summary_stats.append(f"Evaluated Responses: {len(evaluated_responses)}")
+        summary_stats.append(f"Responses with Citation: {citation_count}")
+        
+        if len(successful_responses) > 0:
+            avg_latency = successful_responses['latency'].mean()
+            summary_stats.append(f"Average Latency: {avg_latency:.2f}s")
+        else:
+            summary_stats.append("Average Latency: N/A")
+            
         summary_stats.append("")  # Empty line
         
-        # Score distribution
-        fully_correct = len(evaluated_responses[evaluated_responses['eval_score'] == 100])
-        excellent = len(evaluated_responses[evaluated_responses['eval_score'] >= 80])
-        good = len(evaluated_responses[(evaluated_responses['eval_score'] >= 60) & (evaluated_responses['eval_score'] < 80)])
-        fair = len(evaluated_responses[(evaluated_responses['eval_score'] >= 40) & (evaluated_responses['eval_score'] < 60)])
-        poor = len(evaluated_responses[evaluated_responses['eval_score'] < 40])
-        
-        summary_stats.append("Score Distribution:")
-        summary_stats.append(f"- Fully Correct (100): {fully_correct}")
-        summary_stats.append(f"- Excellent (80-100): {excellent}")
-        summary_stats.append(f"- Good (60-79): {good}")
-        summary_stats.append(f"- Fair (40-59): {fair}")
-        summary_stats.append(f"- Poor (0-39): {poor}")
-    else:
-        summary_stats.append("Average Score: N/A")
-        summary_stats.append("Highest Score: N/A")
-        summary_stats.append("Lowest Score: N/A")
-
-    # Prepare the summary column
-    # Ensure DataFrame has enough rows for the summary
-    if len(df) < len(summary_stats):
-        # Add empty rows to df
-        extra_rows = len(summary_stats) - len(df)
-        empty_rows = pd.DataFrame([{col: "" for col in df.columns} for _ in range(extra_rows)])
-        df = pd.concat([df, empty_rows], ignore_index=True)
-    
-    # Create the column data
-    summary_column_data = [""] * len(df)
-    for i, stat in enumerate(summary_stats):
-        summary_column_data[i] = stat
-        
-    # Insert the column at the beginning (index 0)
-    df.insert(0, 'SUMMARY STATISTICS', summary_column_data)
-    
-    # Save results
-    if not output_path:
-        # Default to output.csv in the same directory as input file
-        base_path = Path(file_path)
-        output_path = base_path.parent / "output.csv"
-    
-    print_status(f"\n💾 Saving results to: {output_path}", "info")
-    
-    # Save in the appropriate format
-    output_ext = Path(output_path).suffix.lower()
-    try:
-        if output_ext == '.csv':
-            df.to_csv(output_path, index=False, encoding='utf-8')
-        elif output_ext in ['.xlsx', '.xls']:
-            df.to_excel(output_path, index=False)
+        if len(evaluated_responses) > 0:
+            avg_score = evaluated_responses['eval_score'].mean()
+            max_score = evaluated_responses['eval_score'].max()
+            min_score = evaluated_responses['eval_score'].min()
+            
+            summary_stats.append(f"Average Score: {avg_score:.1f}/100")
+            summary_stats.append(f"Highest Score: {max_score:.1f}/100")
+            summary_stats.append(f"Lowest Score: {min_score:.1f}/100")
+            
+            summary_stats.append("")  # Empty line
+            
+            # Score distribution
+            fully_correct = len(evaluated_responses[evaluated_responses['eval_score'] == 100])
+            excellent = len(evaluated_responses[evaluated_responses['eval_score'] >= 80])
+            good = len(evaluated_responses[(evaluated_responses['eval_score'] >= 60) & (evaluated_responses['eval_score'] < 80)])
+            fair = len(evaluated_responses[(evaluated_responses['eval_score'] >= 40) & (evaluated_responses['eval_score'] < 60)])
+            poor = len(evaluated_responses[evaluated_responses['eval_score'] < 40])
+            
+            summary_stats.append("Score Distribution:")
+            summary_stats.append(f"- Fully Correct (100): {fully_correct}")
+            summary_stats.append(f"- Excellent (80-100): {excellent}")
+            summary_stats.append(f"- Good (60-79): {good}")
+            summary_stats.append(f"- Fair (40-59): {fair}")
+            summary_stats.append(f"- Poor (0-39): {poor}")
         else:
-            # Default to CSV if unknown extension
-            output_path = Path(output_path).with_suffix('.csv')
-            df.to_csv(output_path, index=False, encoding='utf-8')
-    except Exception as e:
-        print_status(f"❌ Error saving results: {e}", "error")
-        sys.exit(1)
+            summary_stats.append("Average Score: N/A")
+            summary_stats.append("Highest Score: N/A")
+            summary_stats.append("Lowest Score: N/A")
+
+        # Prepare the summary column
+        if len(model_df) < len(summary_stats):
+            extra_rows = len(summary_stats) - len(model_df)
+            empty_rows = pd.DataFrame([{col: "" for col in model_df.columns} for _ in range(extra_rows)])
+            model_df = pd.concat([model_df, empty_rows], ignore_index=True)
+        
+        summary_column_data = [""] * len(model_df)
+        for i, stat in enumerate(summary_stats):
+            summary_column_data[i] = stat
+            
+        model_df.insert(0, 'SUMMARY STATISTICS', summary_column_data)
+        
+        # Determine output path for this model
+        if output_path and len(models) == 1:
+            model_output_path = output_path
+        else:
+            base_path = Path(file_path)
+            model_output_path = base_path.parent / f"{model}-output.csv"
+        
+        # Save results
+        print_status(f"\n   💾 Saving results to: {model_output_path}", "info")
+        
+        try:
+            model_df.to_csv(model_output_path, index=False, encoding='utf-8')
+            output_files.append(model_output_path)
+            print_status(f"   ✅ Results saved successfully!", "success")
+        except Exception as e:
+            print_status(f"   ❌ Error saving results: {e}", "error")
+        
+        # Print summary statistics to console
+        print_status(f"\n   📈 Summary for {model}:", "header")
+        if len(evaluated_responses) > 0:
+            print(f"      Average Score: {avg_score:.1f}/100")
+            print(f"      Highest: {max_score:.1f} | Lowest: {min_score:.1f}")
+        else:
+            print(f"      No evaluations completed")
     
-    print_status(f"✅ Results saved successfully!", "success")
-    
-    # Print summary statistics to console
+    # ========================================
+    # FINAL SUMMARY
+    # ========================================
     print_status("\n" + "=" * 60, "header")
-    print_status("📈 SUMMARY STATISTICS", "header")
+    print_status("  ALL EVALUATIONS COMPLETE", "header")
+    print_status("=" * 60, "header")
     
-    print(f"\n   Total Questions:        {total_questions}")
-    print(f"   Processed Questions:    {processed_count}")
-    print(f"   Successful Responses:   {len(successful_responses)}")
-    print(f"   Evaluated Responses:    {len(evaluated_responses)}")
-    
-    if len(successful_responses) > 0:
-        avg_latency = successful_responses['latency'].mean()
-        print(f"   Average Latency:        {avg_latency:.2f}s")
-    
-    if len(evaluated_responses) > 0:
-        avg_score = evaluated_responses['eval_score'].mean()
-        max_score = evaluated_responses['eval_score'].max()
-        min_score = evaluated_responses['eval_score'].min()
-        
-        print(f"\n   Average Score:          {avg_score:.1f}/100")
-        print(f"   Highest Score:          {max_score:.1f}/100")
-        print(f"   Lowest Score:           {min_score:.1f}/100")
-        
-        # Score distribution
-        fully_correct = len(evaluated_responses[evaluated_responses['eval_score'] == 100])
-        excellent = len(evaluated_responses[evaluated_responses['eval_score'] >= 80])
-        good = len(evaluated_responses[(evaluated_responses['eval_score'] >= 60) & (evaluated_responses['eval_score'] < 80)])
-        fair = len(evaluated_responses[(evaluated_responses['eval_score'] >= 40) & (evaluated_responses['eval_score'] < 60)])
-        poor = len(evaluated_responses[evaluated_responses['eval_score'] < 40])
-        
-        print(f"\n   Score Distribution:")
-        print(f"   - Fully Correct (100):  {fully_correct}")
-        print(f"   - Excellent (80-100):   {excellent}")
-        print(f"   - Good (60-79):         {good}")
-        print(f"   - Fair (40-59):         {fair}")
-        print(f"   - Poor (0-39):          {poor}")
+    print_status(f"\n✅ Generated {len(output_files)} output file(s):", "success")
+    for output_file in output_files:
+        print_status(f"   - {output_file}", "info")
     
     print_status("\n" + "=" * 60 + "\n", "header")
 
@@ -646,24 +862,38 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Run tests with an Excel file
-  python test_global_chat.py test_questions.xlsx
-  
-  # Run tests with a CSV file
+  # Run tests - calls API once, then evaluates with all 3 models and creates 3 output files
   python test_global_chat.py question-answer-ifsca.csv
-
+  # Output files:
+  #   - gemini-2.0-flash-output.csv
+  #   - gemini-2.5-flash-output.csv
+  #   - gemini-3-flash-preview-output.csv
+  
   # Create an example template
   python test_global_chat.py --create-template
 
-  # Specify output file
-  python test_global_chat.py test_questions.xlsx -o results.xlsx
+  # Use only a single model (creates 1 output file)
+  python test_global_chat.py test_questions.xlsx --single-model gemini-2.0-flash
+
+  # Use specific models (creates 2 output files)
+  python test_global_chat.py test_questions.xlsx --models gemini-2.0-flash gpt-4o-mini
 
   # Add delay between requests (useful for rate limiting)
   python test_global_chat.py test_questions.xlsx --delay 2.0
 
+How it works:
+  1. PHASE 1: Sends all questions to the chat API ONCE and collects responses
+  2. PHASE 2: Evaluates all responses using EACH specified model
+  3. Creates separate output CSV files for each model's evaluation
+
+Supported models:
+  - Gemini: gemini-2.0-flash, gemini-2.5-flash, gemini-3-flash-preview, etc.
+  - OpenAI: gpt-4o-mini, gpt-4o, gpt-4-turbo, etc.
+
 Environment variables (loaded from .env file):
   NEXT_AUTH_SESSION_TOKEN - Your NextAuth session token
-  GEMINI_API_KEY          - Your Google Gemini API key for evaluation
+  GEMINI_API_KEY          - Your Google Gemini API key for Gemini model evaluation
+  OPENAI_API_KEY          - Your OpenAI API key for GPT model evaluation
         """
     )
     
@@ -674,7 +904,18 @@ Environment variables (loaded from .env file):
     )
     parser.add_argument(
         '-o', '--output',
-        help='Output file path (default: output.csv)'
+        help='Output file path (default: {model}-output.csv for each model)'
+    )
+    parser.add_argument(
+        '--models',
+        nargs='+',
+        default=EVALUATION_MODELS,
+        help=f'Models to use for evaluation - supports Gemini and OpenAI (default: {", ".join(EVALUATION_MODELS)})'
+    )
+    parser.add_argument(
+        '--single-model',
+        type=str,
+        help='Use only a single model for evaluation (overrides --models)'
     )
     parser.add_argument(
         '--create-template',
@@ -724,19 +965,34 @@ Environment variables (loaded from .env file):
     # Get credentials
     session_token = authenticate(args.email, "")
     gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+    openai_api_key = os.getenv("OPENAI_API_KEY", "")
     
     if not gemini_api_key:
-        print_status("⚠️  Gemini API key not found. Evaluation will be skipped.", "warning")
-        print_status("   Set GEMINI_API_KEY environment variable to enable AI evaluation.", "info")
+        print_status("⚠️  Gemini API key not found. Gemini model evaluation will be skipped.", "warning")
+        print_status("   Set GEMINI_API_KEY environment variable to enable Gemini evaluation.", "info")
     
-    # Process the file
+    if not openai_api_key:
+        print_status("⚠️  OpenAI API key not found. GPT model evaluation will be skipped.", "warning")
+        print_status("   Set OPENAI_API_KEY environment variable to enable OpenAI evaluation.", "info")
+    
+    # Determine which models to use
+    if args.single_model:
+        models_to_use = [args.single_model]
+    else:
+        models_to_use = args.models
+    
+    print_status(f"\n📋 Will evaluate using {len(models_to_use)} model(s): {', '.join(models_to_use)}", "info")
+    
+    # Process the file (API calls once, then evaluate with all models)
     try:
         process_file(
             file_path=args.input_file,
             session_token=session_token,
             gemini_api_key=gemini_api_key,
+            openai_api_key=openai_api_key,
             output_path=args.output,
-            delay_seconds=args.delay
+            delay_seconds=args.delay,
+            models=models_to_use
         )
     except KeyboardInterrupt:
         print_status("\n\n⚠️  Process interrupted by user", "warning")

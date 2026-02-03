@@ -1,4 +1,197 @@
 /**
+ * Escape text for use inside markdown link text [text](url) - escape ] and \.
+ * @param {string} s - Raw text
+ * @returns {string} - Escaped text
+ */
+function escapeMarkdownLinkText(s) {
+  if (typeof s !== "string") return "";
+  return s.replace(/\\/g, "\\\\").replace(/]/g, "\\]");
+}
+
+/** Prefix that we shorten to "FAQs" so AI-written short form matches. */
+const FAQ_FULL_PREFIX = "Frequently Asked Questions (FAQs)";
+
+/** Trailing phrase in FAQ doc title; AI often cites without this (e.g. "Preliminary Section"). */
+const TRAILING_FOR_REIMBURSEMENT = " For Reimbursement";
+
+/**
+ * Return possible phrases that might appear in the message for this doc label
+ * (full label, with period, short form "FAQs...", and citation shortenings without " For Reimbursement...").
+ * @param {string} label - Source doc label
+ * @returns {string[]} - Phrases to try replacing (longest first)
+ */
+function getLabelVariants(label) {
+  if (!label || typeof label !== "string") return [];
+  const trimmed = label.trim();
+  const variants = [trimmed, trimmed + "."];
+  const prefix = FAQ_FULL_PREFIX;
+  if (
+    trimmed.length > prefix.length &&
+    trimmed.slice(0, prefix.length).localeCompare(prefix, undefined, { sensitivity: "accent" }) === 0
+  ) {
+    const rest = trimmed.slice(prefix.length).trimStart();
+    const shortForm = "FAQs" + (rest ? " " + rest : "");
+    if (shortForm !== trimmed) {
+      variants.push(shortForm, shortForm + ".");
+    }
+  }
+  // Citation shortening: "Frequently Asked Questions (FAQs) On Milestones & Illustrative Permissible Expenses"
+  // (AI drops " For Reimbursement Under IFSCA (FinTech Incentive) Scheme, 2022")
+  const idx = trimmed.indexOf(TRAILING_FOR_REIMBURSEMENT);
+  if (idx > 0) {
+    const beforeReimbursement = trimmed.slice(0, idx).trim();
+    if (beforeReimbursement && beforeReimbursement !== trimmed) {
+      variants.push(beforeReimbursement, beforeReimbursement + ".");
+      const shortPrefix = FAQ_FULL_PREFIX;
+      if (
+        beforeReimbursement.length > shortPrefix.length &&
+        beforeReimbursement.slice(0, shortPrefix.length).localeCompare(shortPrefix, undefined, { sensitivity: "accent" }) === 0
+      ) {
+        const rest = beforeReimbursement.slice(shortPrefix.length).trimStart();
+        const shortFormBefore = "FAQs" + (rest ? " " + rest : "");
+        if (shortFormBefore !== beforeReimbursement) {
+          variants.push(shortFormBefore, shortFormBefore + ".");
+        }
+      }
+    }
+  }
+  return variants.sort((a, b) => b.length - a.length);
+}
+
+/**
+ * Replace source document names in message with markdown links that open the doc preview (__docref:index).
+ * Uses longest labels first. Replaces full label, "Label.", and short form (e.g. "FAQs On Milestones...") when applicable.
+ * @param {string} message - The message content
+ * @param {Array<{label: string}>} sourceDocs - List of source docs with label
+ * @returns {string} - Message with document names replaced by [text](__docref:i__)
+ */
+export function injectDocumentLinks(message, sourceDocs) {
+  if (typeof message !== "string" || !Array.isArray(sourceDocs) || sourceDocs.length === 0) {
+    return message;
+  }
+  let out = message;
+  const withIndex = sourceDocs.map((doc, origIdx) => ({ doc, origIdx }));
+  const sorted = withIndex.sort(
+    (a, b) => (b.doc?.label?.length ?? 0) - (a.doc?.label?.length ?? 0),
+  );
+  sorted.forEach(({ doc, origIdx }) => {
+    const label = (doc?.label && typeof doc.label === "string" && doc.label.trim()) || "";
+    if (!label) return;
+    const variants = getLabelVariants(label);
+    for (const phrase of variants) {
+      if (!phrase || !out.includes(phrase)) continue;
+      const escaped = escapeMarkdownLinkText(phrase);
+      const link = `[${escaped}](__docref:${origIdx}__)`;
+      out = out.split(phrase).join(link);
+    }
+  });
+  return out;
+}
+
+/**
+ * Strip __CITATIONS__: [...] block from agent message so it is not shown to the user.
+ * @param {string} text - The message content
+ * @returns {string} - Message with citations block removed
+ */
+export function stripCitationsBlock(text) {
+  if (typeof text !== "string") return text;
+  const marker = "__CITATIONS__:";
+  const idx = text.indexOf(marker);
+  if (idx === -1) return text;
+  return text.slice(0, idx).replace(/\n{2,}$/, "\n").trimEnd();
+}
+
+/**
+ * Section headers that start a "trailing" block we strip (so only compulsory bottom Sources show).
+ * Only meta/source blocks (not in-body "Purpose:" or "Disbursement:"). Case-insensitive, optional space after colon.
+ */
+const TRAILING_SECTION_HEADERS =
+  "Sources|Citations|Source Details|Document|Location|Reference|Additional Context|Grant Description|Disbursement Milestones";
+
+/** Regex: newline(s) + header name + ": " or ":" + optional space + newline */
+const TRAILING_BLOCK_REGEX = new RegExp(
+  `\\n(?:\\n)?(${TRAILING_SECTION_HEADERS}):\\s*\\n`,
+  "gi"
+);
+
+/**
+ * Strip trailing "Sources:", "Citations:", "Source Details:", "Document:", "Reference:", etc.
+ * from message so only the compulsory bottom Sources list is shown. Uses regex to catch all
+ * common section headers (case-insensitive, optional space after colon).
+ * @param {string} text - The message content
+ * @param {boolean} [debug=false] - If true, log strip details to console
+ * @returns {string} - Message with trailing block removed
+ */
+export function stripTrailingSourcesOrCitationsBlock(text, debug = false) {
+  if (typeof text !== "string") return text;
+  const lenBefore = text.length;
+  let cutFrom = text.length;
+  const matches = [];
+  let match;
+  TRAILING_BLOCK_REGEX.lastIndex = 0;
+  while ((match = TRAILING_BLOCK_REGEX.exec(text)) !== null) {
+    cutFrom = Math.min(cutFrom, match.index);
+    matches.push({ header: match[1], index: match.index });
+  }
+  if (cutFrom >= text.length) {
+    if (debug && matches.length === 0)
+      console.debug("[Chat strip] No trailing section headers found, message length:", lenBefore);
+    return text;
+  }
+  const out = text.slice(0, cutFrom).replace(/\n{2,}$/, "\n").trimEnd();
+  if (debug) {
+    console.debug(
+      "[Chat strip] Stripped trailing block:",
+      "matches=",
+      matches.length,
+      "headers=",
+      matches.map((m) => m.header),
+      "cutFrom=",
+      cutFrom,
+      "lenBefore=",
+      lenBefore,
+      "lenAfter=",
+      out.length,
+      "removedPreview=",
+      text.slice(cutFrom, cutFrom + 80).replace(/\n/g, " "),
+    );
+  }
+  return out;
+}
+
+/**
+ * Parse __SOURCE_DOCS__ JSON array from message (new format with id, url, label, citations?).
+ * @param {string} message - The message content to parse
+ * @returns {Array<{id: string, url: string, label: string, citations?: Array<{page?: number, excerpt?: string}>}>|null} - Source docs or null if not found
+ */
+export function parseSourceDocs(message) {
+  const marker = "__SOURCE_DOCS__:";
+  const idx = message.indexOf(marker);
+  if (idx === -1) return null;
+  const afterMarker = message.slice(idx + marker.length).trim();
+  const startBracket = afterMarker.indexOf("[");
+  if (startBracket === -1) return null;
+  let depth = 0;
+  let endBracket = -1;
+  for (let i = startBracket; i < afterMarker.length; i++) {
+    if (afterMarker[i] === "[") depth++;
+    else if (afterMarker[i] === "]") {
+      depth--;
+      if (depth === 0) {
+        endBracket = i;
+        break;
+      }
+    }
+  }
+  if (endBracket === -1) return null;
+  try {
+    return JSON.parse(afterMarker.slice(startBracket, endBracket + 1));
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Helper function to parse document entries from AGENT messages
  * Parses messages that contain document lists in the format:
  * "I found X documents:\n\n\n\"Document Title\"\n\nDocument details..."

@@ -260,20 +260,22 @@ async def chat_with_multi_docs_endpoint(data: MultiDocumentChatRequest):
             f"Processing multi-document chat request with {len(data.documents)} document(s)"
         )
 
-        # Prepare documents data for the AI function
+        # Prepare documents data for the AI function (include pages for citations when available)
         documents_data = []
         for doc in data.documents:
             if not doc.document_text or len(doc.document_text.strip()) == 0:
                 LOGGER.warning(f"Skipping document {doc.document_id} - empty text")
                 continue
-            documents_data.append(
-                {
-                    "document_id": doc.document_id,
-                    "document_text": doc.document_text.strip(),
-                    "metadata": doc.metadata or {},
-                    "document_url": doc.document_url,
-                }
-            )
+            meta = doc.metadata or {}
+            doc_entry = {
+                "document_id": doc.document_id,
+                "document_text": doc.document_text.strip(),
+                "metadata": meta,
+                "document_url": doc.document_url,
+            }
+            if meta.get("pages"):
+                doc_entry["pages"] = meta["pages"]
+            documents_data.append(doc_entry)
 
         if not documents_data:
             raise HTTPException(
@@ -552,6 +554,9 @@ async def websocket_tasks(websocket: WebSocket, token: str = Query(...)):
 
 def _extract_content_from_result(result: Dict[str, Any]) -> str:
     """Extract text content from the document processing result in a generic way."""
+    # Prefer full OCR text when present (PDFs and images)
+    if result.get("raw_ocr_text", "").strip():
+        return result["raw_ocr_text"].strip()
     content_parts = []
     # Try common generic fields
     for key in ["summary", "description", "content", "details"]:

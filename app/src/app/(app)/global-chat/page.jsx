@@ -17,7 +17,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { parseDocumentEntries } from "@/lib/chat-utils";
+import { parseDocumentEntries, parseSourceDocs, stripCitationsBlock, stripTrailingSourcesOrCitationsBlock } from "@/lib/chat-utils";
+import { PdfPreviewDialog } from "@/components/pdf-preview-dialog";
 import { DOCUMENT_FORMATTING } from "@/lib/document-formatting";
 import { getDocumentMarkdownComponents } from "@/lib/markdown";
 import DesktopConversationSidebar from "@/components/desktop";
@@ -413,11 +414,11 @@ export default function GlobalChatPage() {
             prev.map((msg) =>
               msg.id === assistantMessageId
                 ? {
-                    ...msg,
-                    isStreaming: false,
-                    pagination: newPaginationData,
-                    status: null,
-                  }
+                  ...msg,
+                  isStreaming: false,
+                  pagination: newPaginationData,
+                  status: null,
+                }
                 : msg,
             ),
           );
@@ -459,10 +460,10 @@ export default function GlobalChatPage() {
         prev.map((msg) =>
           msg.id === assistantMessageId
             ? {
-                ...msg,
-                content: "Sorry, I encountered an error. Please try again.",
-                isStreaming: false,
-              }
+              ...msg,
+              content: "Sorry, I encountered an error. Please try again.",
+              isStreaming: false,
+            }
             : msg,
         ),
       );
@@ -954,6 +955,59 @@ export default function GlobalChatPage() {
   );
 }
 
+function SourcesLegacyContent({
+  sourcesMessage,
+  visibleDocuments,
+  setVisibleDocuments,
+  markdownComponents,
+}) {
+  const parsedSources = parseDocumentEntries(sourcesMessage);
+  const legacyDocs = parsedSources?.documents || [];
+  const visibleSourceDocs = legacyDocs.slice(0, visibleDocuments);
+  const hasMoreSources = legacyDocs.length > visibleDocuments;
+
+  return (
+    <div className="prose-xs document-response max-w-none">
+      {parsedSources.header && (
+        <Markdown components={markdownComponents}>
+          {parsedSources.header}
+        </Markdown>
+      )}
+      {visibleSourceDocs.map((doc, index) => (
+        <div key={index} className="mt-3">
+          <Markdown components={markdownComponents}>{doc.content}</Markdown>
+        </div>
+      ))}
+      {hasMoreSources && (
+        <div className="flex justify-center mt-3">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              setVisibleDocuments((prev) =>
+                Math.min(prev + 10, legacyDocs.length),
+              )
+            }
+          >
+            View More ({legacyDocs.length - visibleDocuments} more)
+          </Button>
+        </div>
+      )}
+      {visibleDocuments > 10 && (
+        <div className="flex justify-center mt-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setVisibleDocuments(10)}
+          >
+            View Less
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ChatMessage({
   message,
   sender,
@@ -962,9 +1016,49 @@ function ChatMessage({
   status = null,
 }) {
   const [visibleDocuments, setVisibleDocuments] = useState(10);
+  const [previewDoc, setPreviewDoc] = useState(null);
 
-  // Parse document entries for AGENT messages
-  const parsed = sender === "AGENT" ? parseDocumentEntries(message) : null;
+  // Detect and split out "Sources" block appended to an AGENT answer
+  // Supports both: new format (__SOURCE_DOCS__) and legacy (raw OCR excerpts)
+  const SOURCES_MARKER_NEW = "\n\n---\n\nSources:\n__SOURCE_DOCS__:";
+  const SOURCES_MARKER_OLD =
+    "\n\n---\n\nSources (raw OCR excerpts from the documents used above):";
+  let mainMessage = message;
+  let sourcesMessage = null;
+
+  if (sender === "AGENT" && typeof message === "string") {
+    const idxNew = message.indexOf(SOURCES_MARKER_NEW);
+    const idxOld = message.indexOf(SOURCES_MARKER_OLD);
+    const markerIndex =
+      idxNew !== -1
+        ? idxNew
+        : idxOld !== -1
+          ? idxOld
+          : -1;
+    if (markerIndex !== -1) {
+      mainMessage = message.slice(0, markerIndex).trimEnd();
+      sourcesMessage = message.slice(markerIndex).trimStart();
+    }
+    // Remove __CITATIONS__: [...] from displayed answer (backend adds it for parsing)
+    mainMessage = stripCitationsBlock(mainMessage);
+  }
+
+  const sourceDocs = sourcesMessage ? parseSourceDocs(sourcesMessage) : null;
+  // When we have sourceDocs, strip in-body "Sources:" / "Citations:" so only the compulsory bottom list shows
+  const stripDebug =
+    typeof process !== "undefined" && process.env.NODE_ENV === "development";
+  if (sender === "AGENT" && sourceDocs?.length && typeof mainMessage === "string") {
+    mainMessage = stripTrailingSourcesOrCitationsBlock(mainMessage, stripDebug);
+  }
+  // Show links only in the compulsory Sources section at bottom; no inline doc links in the response body
+  const messageWithDocLinks = mainMessage;
+  const componentsForMessage = markdownComponents;
+
+  // Parse document entries for AGENT messages (used for pure document lists)
+  const parsed =
+    sender === "AGENT" && !sourcesMessage
+      ? parseDocumentEntries(message)
+      : null;
   const isDocumentList = parsed?.isDocumentList;
   const documents = parsed?.documents || [];
 
@@ -976,7 +1070,7 @@ function ChatMessage({
     setVisibleDocuments(10);
   };
 
-  // For AGENT messages with document lists, render with pagination
+  // For AGENT messages with document lists (and no separate sources block), render with pagination
   if (isDocumentList && documents.length > 0) {
     const visibleDocs = documents.slice(0, visibleDocuments);
     const hasMore = documents.length > visibleDocuments;
@@ -1030,7 +1124,6 @@ function ChatMessage({
           )}
         </div>
         <Avatar>
-          <AvatarImage src={sender === "AGENT" ? "/icon.png" : undefined} />
           <AvatarFallback>{sender === "AGENT" ? "AI" : "U"}</AvatarFallback>
         </Avatar>
       </div>
@@ -1047,14 +1140,16 @@ function ChatMessage({
       style={{ justifyContent: sender === "AGENT" ? "start" : "end" }}
     >
       <div className="flex flex-col gap-1 max-w-[90%]">
-        {/* Only render bubble if there is a message or if it's NOT streaming (to show empty state if finished empty?) */}
+        {/* Main answer bubble */}
         {/* Actually, if it's streaming and empty, we rely on the status below. */}
         {/* If it's finished and empty, we probably shouldn't show it, but that's rare. */}
-        {(message || (!isStreaming && !status)) && (
+        {(mainMessage || (!isStreaming && !status)) && (
           <div className="p-3 text-sm bg-gray-100 rounded-lg dark:bg-gray-900 text-foreground">
             <div className="prose-sm document-response max-w-none">
-              <Markdown components={markdownComponents}>{message}</Markdown>
-              {isStreaming && !message && !status && (
+              <Markdown components={componentsForMessage}>
+                {messageWithDocLinks}
+              </Markdown>
+              {isStreaming && !mainMessage && !status && (
                 <div className="flex items-center h-4 gap-1">
                   <span
                     className="w-2 h-2 bg-current rounded-full animate-bounce"
@@ -1071,8 +1166,49 @@ function ChatMessage({
                 </div>
               )}
               {/* Streaming cursor when content is being added */}
-              {isStreaming && message && (
+              {isStreaming && mainMessage && (
                 <span className="inline-block w-0.5 h-4 ml-0.5 bg-primary animate-pulse" />
+              )}
+              {/* Compulsory Sources section at bottom when source docs are present */}
+              {!isStreaming && sender === "AGENT" && sourceDocs?.length > 0 && (
+                <div className="mt-4 pt-3 border-t border-border/50">
+                  <p className="text-xs font-semibold text-muted-foreground mb-3">Sources:</p>
+                  <ul className="list-none space-y-3 text-xs">
+                    {sourceDocs.map((doc, idx) => {
+                      const label = doc?.label || `Document ${idx + 1}`;
+                      const citations = doc?.citations ?? [];
+                      const pages = [
+                        ...new Set(
+                          citations
+                            .map((c) => (c?.page != null ? c.page : null))
+                            .filter((p) => p != null),
+                        ),
+                      ].sort((a, b) => a - b);
+                      const firstCitation = citations[0];
+                      const excerptPart =
+                        firstCitation?.excerpt?.trim() || null;
+                      const pagePrefix =
+                        pages.length > 0
+                          ? pages.length === 1
+                            ? `Page ${pages[0]}: `
+                            : `Pages ${pages.join(", ")}: `
+                          : "";
+                      return (
+                        <li key={doc?.id ?? idx} className="text-muted-foreground">
+                          {pagePrefix}
+                          <button
+                            type="button"
+                            className="text-primary underline font-medium hover:text-primary/80 cursor-pointer bg-transparent border-none p-0 align-baseline"
+                            onClick={() => setPreviewDoc(doc)}
+                          >
+                            {label}
+                          </button>
+                          {excerptPart ? `, ${excerptPart}` : null}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
               )}
             </div>
             {timestamp && !isStreaming && (
@@ -1081,6 +1217,15 @@ function ChatMessage({
               </p>
             )}
           </div>
+        )}
+
+        {/* PDF preview when user clicks a document name in the response (sources still parsed for __SOURCE_DOCS__) */}
+        {sender === "AGENT" && sourceDocs?.length > 0 && (
+          <PdfPreviewDialog
+            open={Boolean(previewDoc)}
+            onOpenChange={(open) => !open && setPreviewDoc(null)}
+            sourceDoc={previewDoc}
+          />
         )}
         {isStreaming && status && (
           <div className="flex items-center gap-2 px-3 py-2 text-xs duration-200 rounded-lg text-muted-foreground bg-muted/50 animate-in fade-in">
@@ -1103,7 +1248,6 @@ function ChatMessage({
         )}
       </div>
       <Avatar>
-        <AvatarImage src={sender === "AGENT" ? "/icon.png" : undefined} />
         <AvatarFallback>{sender === "AGENT" ? "AI" : "U"}</AvatarFallback>
       </Avatar>
     </div>
