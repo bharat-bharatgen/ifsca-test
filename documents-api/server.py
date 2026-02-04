@@ -405,6 +405,55 @@ async def find_similar_document_endpoint(request: Request):
 
             results = await conn.fetch(query_sql, *params)
 
+            # If no documents pass the configured threshold, fall back to
+            # "best effort" top-3 by similarity (no threshold filter). This
+            # ensures we still surface the most relevant documents and allows
+            # the caller to use multi-doc chat, instead of dropping to the
+            # generic semantic listing experience.
+            if not results:
+                LOGGER.info(
+                    f"No documents match threshold {threshold}, falling back to top-3 by similarity without threshold"
+                )
+
+                # Build a fallback query that removes the similarity threshold
+                # and simply returns the top 3 closest summaries. We must
+                # recompute the organization/user filter here so that parameter
+                # positions line up correctly for this simplified query.
+                fallback_org_filter = ""
+                if organization_id:
+                    # Only one parameter after the embedding, so this is $2.
+                    fallback_org_filter = 'AND d."organizationId" = $2'
+                elif user_id:
+                    fallback_org_filter = 'AND d."userId" = $2'
+
+                fallback_sql = f"""
+                    SELECT 
+                        ds.id as summary_id,
+                        ds."documentId" as document_id,
+                        ds.summary,
+                        d.title,
+                        d."documentName",
+                        1 - (ds.embedding_256d <=> $1::vector(256)) as similarity
+                    FROM document_summaries ds
+                    JOIN documents d ON ds."documentId" = d.id
+                    WHERE ds.embedding_256d IS NOT NULL
+                      AND ds."isActive" = true
+                      {fallback_org_filter}
+                    ORDER BY ds.embedding_256d <=> $1::vector(256)
+                    LIMIT 3
+                """
+
+                # Note: fallback does not use the similarity threshold parameter.
+                # Parameter positions therefore differ from the primary query:
+                # $1 is always the embedding, and (optional) $2 is the org/user filter.
+                fallback_params = [query_embedding]
+                if organization_id:
+                    fallback_params.append(organization_id)
+                elif user_id:
+                    fallback_params.append(user_id)
+
+                results = await conn.fetch(fallback_sql, *fallback_params)
+
             if results:
                 documents = []
                 for result in results:
@@ -419,12 +468,14 @@ async def find_similar_document_endpoint(request: Request):
                     )
 
                 LOGGER.info(
-                    f"Found {len(documents)} matching document(s) above threshold {threshold}: "
+                    f"Found {len(documents)} matching document(s) (threshold {threshold} with fallback): "
                     f"{[d['title'] or d['document_name'] for d in documents]}"
                 )
                 return {"documents": documents, "count": len(documents)}
             else:
-                LOGGER.info(f"No documents match threshold {threshold}")
+                LOGGER.info(
+                    f"No documents found even after fallback similarity search (threshold {threshold})"
+                )
                 return {
                     "documents": [],
                     "count": 0,

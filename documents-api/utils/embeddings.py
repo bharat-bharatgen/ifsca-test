@@ -8,11 +8,16 @@ from typing import Dict, Any, Optional, List
 import asyncpg
 import google.generativeai as genai
 import requests
+from dotenv import load_dotenv
 
 from utils.retry_utils import retry_with_backoff
 from database import get_pool
 
 LOGGER = logging.getLogger(__name__)
+
+# Ensure .env is loaded in all processes that import this module (including Celery workers),
+# so that LLM=selfhost is respected for embeddings.
+load_dotenv()
 
 def chunk_text(text: str, max_chars: int = 1500) -> list:
     """Split text into chunks for embedding"""
