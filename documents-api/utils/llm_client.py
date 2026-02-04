@@ -18,11 +18,38 @@ load_dotenv()
 
 LOGGER = logging.getLogger(__name__)
 
+def _env(name: str, default: str = "") -> str:
+    """Read environment variable with optional default (string)."""
+    val = os.getenv(name)
+    return default if val is None else str(val)
+
+
+def _selected_llm_mode() -> str:
+    """
+    Primary switch for the codebase.
+
+    Supported values:
+    - LLM=gemini   (default)
+    - LLM=selfhost
+
+    Backward compatible:
+    - LLM_PROVIDER=GEMINI|OPENAI
+    """
+    mode = _env("LLM", "").strip().lower()
+    if mode:
+        return mode
+    # Back-compat: treat OPENAI as selfhost-ish
+    provider = _env("LLM_PROVIDER", "GEMINI").strip().lower()
+    if provider == "openai":
+        return "selfhost"
+    return "gemini"
+
+
 # Default config (fallback if DB config not available)
-DEFAULT_PROVIDER = os.getenv("LLM_PROVIDER", "GEMINI")  # "GEMINI" or "OPENAI"
-DEFAULT_API_BASE = os.getenv("OPENAI_API_BASE", "http://localhost:8005/v1")
-DEFAULT_API_KEY = os.getenv("OPENAI_API_KEY", "sk-key")
-DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-oss-20b")
+DEFAULT_PROVIDER = "OPENAI" if _selected_llm_mode() == "selfhost" else "GEMINI"  # "GEMINI" or "OPENAI"
+DEFAULT_API_BASE = _env("SELFHOST_API_BASE", _env("OPENAI_API_BASE", "http://localhost:8005/v1")).rstrip("/")
+DEFAULT_API_KEY = _env("SELFHOST_API_KEY", _env("OPENAI_API_KEY", "sk-key"))
+DEFAULT_MODEL = _env("SELFHOST_REASONING_MODEL", _env("OPENAI_MODEL", "gpt-oss-20b"))
 GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
@@ -52,7 +79,9 @@ class LLMClient:
             self.provider = DEFAULT_PROVIDER
             self.api_base = DEFAULT_API_BASE
             self.api_key = DEFAULT_API_KEY
-            self.model_name = DEFAULT_MODEL if self.provider == "OPENAI" else GEMINI_MODEL
+            self.model_name = (
+                DEFAULT_MODEL if self.provider == "OPENAI" else GEMINI_MODEL
+            )
 
         # Configure Gemini if needed
         if self.provider == "GEMINI":
@@ -130,6 +159,8 @@ class LLMClient:
                 },
                 json={
                     "model": self.model_name,
+                    # BharatGen selfhost supports this; harmless for other compatible backends.
+                    "enable_thinking": bool(kwargs.pop("enable_thinking", False)),
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": temperature,
                     "max_tokens": max_tokens,
@@ -258,6 +289,7 @@ class LLMClient:
                         "temperature": temperature,
                         "max_tokens": max_tokens,
                         "stream": True,
+                        "enable_thinking": bool(kwargs.pop("enable_thinking", False)),
                         **kwargs
                     },
                     stream=True,

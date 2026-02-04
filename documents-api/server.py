@@ -365,14 +365,9 @@ async def find_similar_document_endpoint(request: Request):
         )
 
         # Generate embedding for the query
-        from utils.embeddings import _call_gemini_embed_content
+        from utils.embeddings import embed_text_256d
 
-        query_result = await _call_gemini_embed_content(
-            model_name="gemini-embedding-001",
-            content=query,
-            task_type="retrieval_query",  # Use retrieval_query for search queries
-            output_dimensionality=256,
-        )
+        query_result = await embed_text_256d(query)
         query_embedding = "[" + ",".join(map(str, query_result["embedding"])) + "]"
 
         # Find most similar document summaries using vector similarity
