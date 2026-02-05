@@ -376,6 +376,7 @@ async def process_document_with_gemini(
 
         # Extract raw OCR text from the document
         raw_ocr_text = ""
+        ocr_method = None
         raw_ocr_pages: List[Dict[str, Any]] = []
         if is_pdf:
             # For PDFs, extract text using PyPDF2 (full text and by-page for citations)
@@ -385,6 +386,7 @@ async def process_document_with_gemini(
             LOGGER.info(
                 f"[ProcessDocument] Extracted {len(raw_ocr_text)} characters from PDF ({len(raw_ocr_pages)} pages)"
             )
+            ocr_method = "pdf_pypdf2_text"
         else:
             LOGGER.info("[ProcessDocument] Image input detected; OCR may be performed by provider")
 
@@ -415,6 +417,7 @@ async def process_document_with_gemini(
                 raw_ocr_text = ocr["text"]
                 input_tokens += ocr["input_tokens"]
                 output_tokens += ocr["output_tokens"]
+                ocr_method = "selfhost_image_ocr"
 
             # For PDFs: use extracted text (PyPDF2). If empty, still attempt reasoning with placeholder.
             reasoning_model = _selfhost_reasoning_model()
@@ -451,6 +454,7 @@ async def process_document_with_gemini(
                     ocr_response = _call_gemini_for_document(ocr_prompt, file_part)
                     raw_ocr_text = ocr_response.text.strip()
                     LOGGER.info(f"[Gemini] Extracted {len(raw_ocr_text)} characters from image via OCR")
+                    ocr_method = "gemini_image_ocr"
 
                     # Add OCR token usage to the total
                     if hasattr(ocr_response, 'usage_metadata'):
@@ -622,7 +626,13 @@ async def process_document_with_gemini(
              # Add raw OCR text to result
         result["raw_ocr_text"] = raw_ocr_text
         result["raw_ocr_pages"] = raw_ocr_pages
-        LOGGER.info(f"[Gemini] Total raw OCR text length: {len(raw_ocr_text)} characters")
+        LOGGER.info(
+            "[OCR] Completed OCR extraction (method=%s, is_pdf=%s, is_image=%s, chars=%d)",
+            ocr_method or "none",
+            is_pdf,
+            is_image,
+            len(raw_ocr_text or ""),
+        )
 
         LOGGER.info(
             f"[Gemini] Processed {mime_type} document. "

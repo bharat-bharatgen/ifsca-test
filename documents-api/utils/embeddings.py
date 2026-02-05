@@ -141,6 +141,11 @@ async def embed_text_256d(content: str) -> Dict[str, Any]:
             content = content[:max_chars]
 
         model = os.getenv("SELFHOST_EMBEDDING_MODEL", "kalm-embedding")
+        LOGGER.info(
+            "[Embeddings] Using selfhost embeddings (model=%s, chars=%d)",
+            model,
+            len(content),
+        )
         data = await _call_selfhost_embeddings(model_name=model, inputs=[content])
         # OpenAI-compatible embedding format: {"data":[{"embedding":[...], "index":0}], ...}
         emb = (data.get("data") or [{}])[0].get("embedding") or []
@@ -155,6 +160,11 @@ async def embed_text_256d(content: str) -> Dict[str, Any]:
         return {"embedding": emb, "model_used": model}
 
     # Default Gemini
+    LOGGER.info(
+        "[Embeddings] Using Gemini embeddings (model=%s, chars=%d)",
+        "gemini-embedding-001",
+        len(content),
+    )
     result = await _call_gemini_embed_content(
         model_name="gemini-embedding-001",
         content=content,
