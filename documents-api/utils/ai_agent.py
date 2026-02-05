@@ -18,6 +18,16 @@ from utils.prompts import PROMPTS
 from utils.document_processor import compress_file_if_needed
 from utils.retry_utils import retry_with_backoff
 from utils.llm_client import get_llm_client, LLMClient
+from utils.langfuse_client import observe, update_current_span
+
+
+def _transform_stream_output(items):
+    """Transform streamed items to a single string output for Langfuse."""
+    text_parts = []
+    for item in items:
+        if isinstance(item, dict) and item.get("type") == "content":
+            text_parts.append(item.get("text", ""))
+    return "".join(text_parts) if text_parts else "No content generated"
 
 LOGGER = logging.getLogger(__name__)
 
@@ -270,6 +280,7 @@ Text to translate:
         return text, 0, 0
 
 
+@observe(name="chat_with_specific_document")
 def chat_with_specific_document(
     document_id: str,
     document_text: str,
@@ -426,6 +437,7 @@ def chat_with_specific_document(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@observe(name="stream_chat_with_specific_document", transform_to_string=_transform_stream_output)
 async def stream_chat_with_specific_document(
     document_id: str,
     document_text: str,
@@ -600,6 +612,7 @@ async def stream_chat_with_specific_document(
         yield {"type": "error", "message": str(e)}
 
 
+@observe(name="chat_with_multiple_documents")
 def chat_with_multiple_documents(
     documents: list[Dict[str, Any]],
     query: str,
@@ -791,6 +804,7 @@ Instructions:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@observe(name="stream_chat_with_multiple_documents", transform_to_string=_transform_stream_output)
 async def stream_chat_with_multiple_documents(
     documents: list[Dict[str, Any]],
     query: str,
@@ -1033,6 +1047,9 @@ Instructions:
                     await asyncio.sleep(0)
 
         LOGGER.info(f"✅ Streamed {chunk_count} chunks ({total_chars} total chars) for multi-document chat")
+        
+        # Update Langfuse span with the full response output
+        update_current_span(output=full_response_text[:5000])  # Limit output size for Langfuse
 
         # Parse __CITATIONS__ from response if present (document title, page, excerpt)
         parsed_citations = []

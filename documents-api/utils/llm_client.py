@@ -14,6 +14,8 @@ import requests
 import google.generativeai as genai
 from dotenv import load_dotenv
 
+from utils.langfuse_client import observe
+
 load_dotenv()
 
 LOGGER = logging.getLogger(__name__)
@@ -89,6 +91,7 @@ class LLMClient:
 
         LOGGER.info(f"LLM Client initialized: provider={self.provider}, model={self.model_name}")
 
+    @observe(as_type="generation")
     def chat_completion(
         self,
         prompt: str,
@@ -183,6 +186,7 @@ class LLMClient:
             LOGGER.error(f"OpenAI-compatible chat error: {e}")
             raise
 
+    @observe(as_type="generation")
     async def stream_chat_completion(
         self,
         prompt: str,
