@@ -14,7 +14,7 @@ import requests
 import google.generativeai as genai
 from dotenv import load_dotenv
 
-from utils.langfuse_client import observe
+from utils.langfuse_client import observe, update_current_generation
 
 load_dotenv()
 
@@ -144,6 +144,13 @@ class LLMClient:
         except Exception as e:
             LOGGER.error(f"Gemini chat error: {e}")
             raise
+        finally:
+            # Report token usage to Langfuse (if in a traced generation)
+            if 'input_tokens' in dir() and 'output_tokens' in dir():
+                update_current_generation(
+                    model=self.model_name,
+                    usage_details={"input": input_tokens, "output": output_tokens}
+                )
 
     def _openai_chat(
         self,
@@ -181,6 +188,12 @@ class LLMClient:
             input_tokens = usage.get("prompt_tokens", 0)
             output_tokens = usage.get("completion_tokens", 0)
 
+            # Report token usage to Langfuse
+            update_current_generation(
+                model=self.model_name,
+                usage_details={"input": input_tokens, "output": output_tokens}
+            )
+
             return text, input_tokens, output_tokens
         except Exception as e:
             LOGGER.error(f"OpenAI-compatible chat error: {e}")
@@ -203,11 +216,30 @@ class LLMClient:
         - For token_usage: input_tokens, output_tokens (int)
         """
         LOGGER.info(f"🤖 Stream request using provider={self.provider}, model={self.model_name}")
+        
         if self.provider == "GEMINI":
             async for chunk in self._gemini_stream(prompt, temperature, max_tokens, **kwargs):
+                # Intercept token_usage and report to Langfuse BEFORE yielding
+                if chunk.get("type") == "token_usage":
+                    input_tokens = chunk.get("input_tokens", 0)
+                    output_tokens = chunk.get("output_tokens", 0)
+                    LOGGER.info(f"📊 Token usage: input={input_tokens}, output={output_tokens}")
+                    update_current_generation(
+                        model=self.model_name,
+                        usage_details={"input": input_tokens, "output": output_tokens}
+                    )
                 yield chunk
         else:
             async for chunk in self._openai_stream(prompt, temperature, max_tokens, **kwargs):
+                # Intercept token_usage and report to Langfuse BEFORE yielding
+                if chunk.get("type") == "token_usage":
+                    input_tokens = chunk.get("input_tokens", 0)
+                    output_tokens = chunk.get("output_tokens", 0)
+                    LOGGER.info(f"📊 Token usage: input={input_tokens}, output={output_tokens}")
+                    update_current_generation(
+                        model=self.model_name,
+                        usage_details={"input": input_tokens, "output": output_tokens}
+                    )
                 yield chunk
 
     async def _gemini_stream(
@@ -293,6 +325,7 @@ class LLMClient:
                         "temperature": temperature,
                         "max_tokens": max_tokens,
                         "stream": True,
+                        "stream_options": {"include_usage": True},  # Request token usage in stream
                         "enable_thinking": bool(kwargs.pop("enable_thinking", False)),
                         **kwargs
                     },
