@@ -76,6 +76,17 @@ if _langfuse_enabled:
                 _langfuse_client.update_current_span(output=output, metadata=metadata, **kwargs)
             except Exception as e:
                 LOGGER.debug(f"Failed to update current span: {e}")
+        
+        def update_current_generation(usage_details=None, model=None, **kwargs):
+            """Update the current generation span with token usage and model info."""
+            try:
+                _langfuse_client.update_current_generation(
+                    usage_details=usage_details,
+                    model=model,
+                    **kwargs
+                )
+            except Exception as e:
+                LOGGER.debug(f"Failed to update current generation: {e}")
             
     except ImportError as e:
         LOGGER.warning(f"Langfuse package not installed: {e}")
@@ -103,5 +114,9 @@ if not _langfuse_enabled:
         return None
     
     def update_current_span(output=None, metadata=None, **kwargs):
+        """No-op update when Langfuse is disabled."""
+        pass
+    
+    def update_current_generation(usage_details=None, model=None, **kwargs):
         """No-op update when Langfuse is disabled."""
         pass
