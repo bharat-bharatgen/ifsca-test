@@ -6,6 +6,7 @@ import re
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 import imghdr
+import base64
 
 import google.generativeai as genai
 import requests
@@ -241,6 +242,106 @@ def _call_gemini_for_document(prompt: str, file_part: dict) -> Any:
     return response
 
 
+def _llm_mode() -> str:
+    """Primary switch: LLM=selfhost|gemini."""
+    return (os.getenv("LLM", "gemini") or "gemini").strip().lower()
+
+
+def _selfhost_api_base() -> str:
+    return (os.getenv("SELFHOST_API_BASE", "") or "").rstrip("/")
+
+
+def _selfhost_api_key() -> str:
+    return os.getenv("SELFHOST_API_KEY", "") or ""
+
+
+def _selfhost_reasoning_model() -> str:
+    return os.getenv("SELFHOST_REASONING_MODEL", "gpt-oss-20b")
+
+
+def _selfhost_ocr_model() -> str:
+    return os.getenv("SELFHOST_OCR_MODEL", "rednote-hilab/dots.ocr")
+
+
+def _selfhost_chat_completions_sync(payload: Dict[str, Any]) -> Dict[str, Any]:
+    api_base = _selfhost_api_base()
+    api_key = _selfhost_api_key()
+    if not api_base or not api_key:
+        raise ValueError(
+            "SELFHOST_API_BASE and SELFHOST_API_KEY are required when LLM=selfhost"
+        )
+
+    resp = requests.post(
+        f"{api_base}/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=180,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+@retry_with_backoff(max_retries=3, initial_delay=2.0, max_delay=60.0)
+def _selfhost_chat_text(prompt: str, model_name: str, max_tokens: int = 16384) -> Dict[str, Any]:
+    data = _selfhost_chat_completions_sync(
+        {
+            "model": model_name,
+            "enable_thinking": False,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens,
+            "temperature": 0.1,
+        }
+    )
+    text = (
+        (((data.get("choices") or [{}])[0]).get("message") or {}).get("content") or ""
+    ).strip()
+    usage = data.get("usage") or {}
+    return {
+        "text": text,
+        "input_tokens": int(usage.get("prompt_tokens") or 0),
+        "output_tokens": int(usage.get("completion_tokens") or 0),
+        "raw": data,
+    }
+
+
+@retry_with_backoff(max_retries=3, initial_delay=2.0, max_delay=60.0)
+def _selfhost_ocr_image_text(file_content: bytes, mime_type: str) -> Dict[str, Any]:
+    """
+    OCR via self-host Dots OCR model using OpenAI-compatible chat/completions.
+    Returns dict with text + token usage.
+    """
+    model_name = _selfhost_ocr_model()
+    b64 = base64.b64encode(file_content).decode("utf-8")
+    data_url = f"data:{mime_type};base64,{b64}"
+
+    payload = {
+        "model": model_name,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                    {"type": "text", "text": "Extract text from this image"},
+                ],
+            }
+        ],
+    }
+    data = _selfhost_chat_completions_sync(payload)
+    text = (
+        (((data.get("choices") or [{}])[0]).get("message") or {}).get("content") or ""
+    ).strip()
+    usage = data.get("usage") or {}
+    return {
+        "text": text,
+        "input_tokens": int(usage.get("prompt_tokens") or 0),
+        "output_tokens": int(usage.get("completion_tokens") or 0),
+        "raw": data,
+    }
+
+
 async def process_document_with_gemini(
     file_content: bytes, 
     user_name: str, 
@@ -252,9 +353,9 @@ async def process_document_with_gemini(
     Returns structured data with contract details and summary.
     """
     try:
+        mode = _llm_mode()
         LOGGER.info(
-            f"[Gemini] Starting process_document_with_gemini "
-            f"(user_name={user_name}, metadata_fields={metadata_fields})"
+            f"[ProcessDocument] Starting (mode={mode}, user_name={user_name}, metadata_fields={metadata_fields})"
         )
 
         is_pdf = file_content.startswith(b'%PDF')
@@ -278,13 +379,14 @@ async def process_document_with_gemini(
         raw_ocr_pages: List[Dict[str, Any]] = []
         if is_pdf:
             # For PDFs, extract text using PyPDF2 (full text and by-page for citations)
-            LOGGER.info("[Gemini] Extracting raw text from PDF using PyPDF2")
+            LOGGER.info("[ProcessDocument] Extracting raw text from PDF using PyPDF2")
             raw_ocr_text = extract_text_from_pdf(file_content)
             raw_ocr_pages = extract_text_from_pdf_by_pages(file_content)
-            LOGGER.info(f"[Gemini] Extracted {len(raw_ocr_text)} characters from PDF ({len(raw_ocr_pages)} pages)")
+            LOGGER.info(
+                f"[ProcessDocument] Extracted {len(raw_ocr_text)} characters from PDF ({len(raw_ocr_pages)} pages)"
+            )
         else:
-            # For images, we'll get the text from Gemini's response
-            LOGGER.info("[Gemini] Will extract OCR text from image via Gemini")
+            LOGGER.info("[ProcessDocument] Image input detected; OCR may be performed by provider")
 
         # Build prompt with custom metadata fields if provided
         base_prompt = USER_CONTEXT_PARSE_DOCUMENT
@@ -301,45 +403,75 @@ async def process_document_with_gemini(
             base_prompt = base_prompt + custom_fields_instruction
 
         prompt = f"{base_prompt}\nReturn only a valid JSON object matching the schema: {json.dumps({'contract_details': {}, 'contract_summary': ''}, indent=2)}. Escape all special characters (quotes, newlines) in strings. Do not include extra text or comments."
-        
-        LOGGER.info("[Gemini] Calling Gemini model for document analysis")
-        response = _call_gemini_for_document(prompt, file_part)
 
-        # Extract token usage from response
-        usage_metadata = response.usage_metadata if hasattr(response, 'usage_metadata') else None
-        input_tokens = usage_metadata.prompt_token_count if usage_metadata else 0
-        output_tokens = usage_metadata.candidates_token_count if usage_metadata else 0
+        input_tokens = 0
+        output_tokens = 0
 
-        LOGGER.debug(f"[Gemini] Raw Gemini response (truncated):\n{response.text[:5000]}")
+        if mode == "selfhost":
+            # For images: OCR first (Dots OCR), then do structured extraction from OCR text.
+            if is_image and not raw_ocr_text:
+                LOGGER.info("[SelfHost] Running Dots OCR on image")
+                ocr = _selfhost_ocr_image_text(file_content=file_content, mime_type=mime_type)
+                raw_ocr_text = ocr["text"]
+                input_tokens += ocr["input_tokens"]
+                output_tokens += ocr["output_tokens"]
 
-        cleaned_text = clean_gemini_json_response(response.text)
+            # For PDFs: use extracted text (PyPDF2). If empty, still attempt reasoning with placeholder.
+            reasoning_model = _selfhost_reasoning_model()
+            doc_text_for_reasoning = raw_ocr_text.strip() if raw_ocr_text else ""
+
+            reasoning_prompt = (
+                f"{prompt}\n\n"
+                "DOCUMENT TEXT (use this as the only source of truth):\n"
+                f"{doc_text_for_reasoning or '[NO_EXTRACTED_TEXT_AVAILABLE]'}\n"
+            )
+            LOGGER.info(f"[SelfHost] Calling reasoning model={reasoning_model} for structured extraction")
+            chat = _selfhost_chat_text(reasoning_prompt, model_name=reasoning_model, max_tokens=16384)
+            input_tokens += chat["input_tokens"]
+            output_tokens += chat["output_tokens"]
+            cleaned_text = clean_gemini_json_response(chat["text"])
+            LOGGER.debug(f"[SelfHost] Raw response (truncated):\n{chat['text'][:5000]}")
+        else:
+            LOGGER.info("[Gemini] Calling Gemini model for document analysis")
+            response = _call_gemini_for_document(prompt, file_part)
+
+            # Extract token usage from response
+            usage_metadata = response.usage_metadata if hasattr(response, 'usage_metadata') else None
+            input_tokens = usage_metadata.prompt_token_count if usage_metadata else 0
+            output_tokens = usage_metadata.candidates_token_count if usage_metadata else 0
+
+            LOGGER.debug(f"[Gemini] Raw Gemini response (truncated):\n{response.text[:5000]}")
+            cleaned_text = clean_gemini_json_response(response.text)
+
+            # For images, extract full OCR text with a separate call
+            if is_image and not raw_ocr_text:
+                try:
+                    LOGGER.info("[Gemini] Extracting full OCR text from image")
+                    ocr_prompt = "Extract and return ALL text from this image. Include everything you can read, preserving the original structure and formatting as much as possible. Return only the extracted text, no analysis or summary."
+                    ocr_response = _call_gemini_for_document(ocr_prompt, file_part)
+                    raw_ocr_text = ocr_response.text.strip()
+                    LOGGER.info(f"[Gemini] Extracted {len(raw_ocr_text)} characters from image via OCR")
+
+                    # Add OCR token usage to the total
+                    if hasattr(ocr_response, 'usage_metadata'):
+                        ocr_usage = ocr_response.usage_metadata
+                        input_tokens += ocr_usage.prompt_token_count if ocr_usage else 0
+                        output_tokens += ocr_usage.candidates_token_count if ocr_usage else 0
+                except Exception as ocr_error:
+                    LOGGER.warning(f"[Gemini] Failed to extract OCR text from image: {ocr_error}")
+                    # Fallback to empty string if OCR extraction fails
+                    raw_ocr_text = ""
+
         try:
             result = json.loads(cleaned_text)
         except json.JSONDecodeError as e:
-            LOGGER.error(f"[Gemini] Failed to parse JSON response: {e}\nRaw response:\n{response.text[:5000]}")
+            LOGGER.error(
+                f"[ProcessDocument] Failed to parse JSON response: {e}\nRaw response (truncated):\n{cleaned_text[:5000]}"
+            )
             result = {
                 "contract_details": {},
                 "contract_summary": "Failed to parse response. Invalid JSON.",
             }
-
-        # For images, extract full OCR text with a separate call
-        if is_image and not raw_ocr_text:
-            try:
-                LOGGER.info("[Gemini] Extracting full OCR text from image")
-                ocr_prompt = "Extract and return ALL text from this image. Include everything you can read, preserving the original structure and formatting as much as possible. Return only the extracted text, no analysis or summary."
-                ocr_response = _call_gemini_for_document(ocr_prompt, file_part)
-                raw_ocr_text = ocr_response.text.strip()
-                LOGGER.info(f"[Gemini] Extracted {len(raw_ocr_text)} characters from image via OCR")
-
-                # Add OCR token usage to the total
-                if hasattr(ocr_response, 'usage_metadata'):
-                    ocr_usage = ocr_response.usage_metadata
-                    input_tokens += ocr_usage.prompt_token_count if ocr_usage else 0
-                    output_tokens += ocr_usage.candidates_token_count if ocr_usage else 0
-            except Exception as ocr_error:
-                LOGGER.warning(f"[Gemini] Failed to extract OCR text from image: {ocr_error}")
-                # Fallback to empty string if OCR extraction fails
-                raw_ocr_text = ""
 
         # Add token usage to result
         result["_token_usage"] = {
@@ -348,8 +480,10 @@ async def process_document_with_gemini(
         }
 
         details = result.get("contract_details", {})
+        provider_label = "[SelfHost]" if mode == "selfhost" else "[Gemini]"
         LOGGER.info(
-            "[Gemini] contract_details keys: %s",
+            "%s contract_details keys: %s",
+            provider_label,
             list(details.keys())
         )
         doc_type = details.get("type", "CONTRACT")

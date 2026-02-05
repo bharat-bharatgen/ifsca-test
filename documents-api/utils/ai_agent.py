@@ -18,6 +18,16 @@ from utils.prompts import PROMPTS
 from utils.document_processor import compress_file_if_needed
 from utils.retry_utils import retry_with_backoff
 from utils.llm_client import get_llm_client, LLMClient
+from utils.langfuse_client import observe, update_current_span
+
+
+def _transform_stream_output(items):
+    """Transform streamed items to a single string output for Langfuse."""
+    text_parts = []
+    for item in items:
+        if isinstance(item, dict) and item.get("type") == "content":
+            text_parts.append(item.get("text", ""))
+    return "".join(text_parts) if text_parts else "No content generated"
 
 LOGGER = logging.getLogger(__name__)
 
@@ -32,6 +42,23 @@ MAX_MENTIONED_DOC_TEXT_LENGTH = 5000  # Reduced for faster processing
 
 # Gemini model name - using Gemini 3 Flash with minimal thinking
 GEMINI_MODEL_NAME = "gemini-3-flash-preview"
+
+
+# Cache for configurable chat client (Gemini or selfhost)
+_chat_llm_client: Optional[LLMClient] = None
+
+
+def get_chat_client() -> LLMClient:
+    """Get the LLM client for non-streaming chat tasks in this module."""
+    global _chat_llm_client
+    if _chat_llm_client is None:
+        _chat_llm_client = get_llm_client()
+    return _chat_llm_client
+
+
+def _llm_mode() -> str:
+    """Primary switch: LLM=selfhost|gemini."""
+    return (os.getenv("LLM", "gemini") or "gemini").strip().lower()
 
 
 def _is_greeting(text: str) -> bool:
@@ -253,6 +280,7 @@ Text to translate:
         return text, 0, 0
 
 
+@observe(name="chat_with_specific_document")
 def chat_with_specific_document(
     document_id: str,
     document_text: str,
@@ -269,6 +297,7 @@ def chat_with_specific_document(
     - Supports @ mentions: if mentioned_documents is provided, includes their context in the prompt.
     """
     try:
+        mode = _llm_mode()
         generation_config = {
             "temperature": 0.3,
             "top_p": 0.8,
@@ -276,9 +305,12 @@ def chat_with_specific_document(
             "max_output_tokens": 8192,
         }
 
-        model = ggenai.GenerativeModel(
-            GEMINI_MODEL_NAME, generation_config=generation_config
-        )
+        # Gemini-only model (selfhost uses LLMClient below)
+        model = None
+        if mode != "selfhost":
+            model = ggenai.GenerativeModel(
+                GEMINI_MODEL_NAME, generation_config=generation_config
+            )
 
         safe_metadata = metadata or {}
         mentioned_docs = mentioned_documents or []
@@ -321,7 +353,7 @@ def chat_with_specific_document(
 
         prompt_parts = [prompt]
 
-        if document_url:
+        if document_url and mode != "selfhost":
             try:
                 resp = requests.get(document_url)
                 resp.raise_for_status()
@@ -346,18 +378,30 @@ def chat_with_specific_document(
             except Exception as e:
                 LOGGER.warning(f"Could not attach document file to prompt: {e}")
 
-        response = _call_gemini_for_chat(prompt_parts, generation_config)
+        if mode == "selfhost":
+            # Selfhost path: rely on prompt text (no file uploads).
+            text, input_tokens, output_tokens = _call_llm_for_chat(
+                prompt, generation_config
+            )
+            if not text:
+                return {
+                    "text": "I apologize, but I couldn't analyze your question. Please try rephrasing it.",
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                }
+        else:
+            response = _call_gemini_for_chat(prompt_parts, generation_config)
 
-        text = (response.text or "").strip()
-        if not text:
-            return "I apologize, but I couldn't analyze your question. Please try rephrasing it."
+            text = (response.text or "").strip()
+            if not text:
+                return "I apologize, but I couldn't analyze your question. Please try rephrasing it."
 
-        # Extract token usage from response
-        usage_metadata = (
-            response.usage_metadata if hasattr(response, "usage_metadata") else None
-        )
-        input_tokens = usage_metadata.prompt_token_count if usage_metadata else 0
-        output_tokens = usage_metadata.candidates_token_count if usage_metadata else 0
+            # Extract token usage from response
+            usage_metadata = (
+                response.usage_metadata if hasattr(response, "usage_metadata") else None
+            )
+            input_tokens = usage_metadata.prompt_token_count if usage_metadata else 0
+            output_tokens = usage_metadata.candidates_token_count if usage_metadata else 0
 
         # Check if response is in English, translate if not
         is_english_result, detect_input_tokens, detect_output_tokens = _is_english(text)
@@ -393,6 +437,7 @@ def chat_with_specific_document(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@observe(name="stream_chat_with_specific_document", transform_to_string=_transform_stream_output)
 async def stream_chat_with_specific_document(
     document_id: str,
     document_text: str,
@@ -407,6 +452,7 @@ async def stream_chat_with_specific_document(
     Yields dicts with keys: 'type' (status/content/token_usage) and payload.
     """
     try:
+        mode = _llm_mode()
         yield {"type": "status", "message": "Preparing document analysis..."}
 
         generation_config = {
@@ -416,10 +462,12 @@ async def stream_chat_with_specific_document(
             "max_output_tokens": 8192,
         }
 
-        # Initialize model
-        model = ggenai.GenerativeModel(
-            GEMINI_MODEL_NAME, generation_config=generation_config
-        )
+        # Gemini-only model (selfhost uses LLMClient streaming)
+        model = None
+        if mode != "selfhost":
+            model = ggenai.GenerativeModel(
+                GEMINI_MODEL_NAME, generation_config=generation_config
+            )
 
         safe_metadata = metadata or {}
         mentioned_docs = mentioned_documents or []
@@ -467,7 +515,7 @@ async def stream_chat_with_specific_document(
 
         prompt_parts = [prompt]
 
-        if document_url:
+        if document_url and mode != "selfhost":
             yield {"type": "status", "message": "Downloading referenced file..."}
             try:
                 # Run blocking requests.get in a thread
@@ -497,28 +545,42 @@ async def stream_chat_with_specific_document(
 
         yield {"type": "status", "message": "Generating response..."}
 
-        # Stream response asynchronously
-        response = await model.generate_content_async(prompt_parts, stream=True)
-
         input_tokens = 0
         output_tokens = 0
         chunk_count = 0
         full_response_text = ""
 
-        async for chunk in response:
-            # Track tokens if available (Gemini 1.5/pro often provides this in chunks or at end)
-            if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
-                input_tokens = chunk.usage_metadata.prompt_token_count or input_tokens
-                output_tokens = (
-                    chunk.usage_metadata.candidates_token_count or output_tokens
-                )
+        if mode == "selfhost":
+            llm_client = get_chat_client()
+            async for item in llm_client.stream_chat_completion(
+                prompt, **generation_config
+            ):
+                if item["type"] == "content":
+                    chunk_count += 1
+                    full_response_text += item["text"]
+                    yield {"type": "content", "text": item["text"]}
+                    await asyncio.sleep(0)
+                elif item["type"] == "token_usage":
+                    input_tokens = item.get("input_tokens", 0)
+                    output_tokens = item.get("output_tokens", 0)
+        else:
+            # Stream response asynchronously (Gemini)
+            response = await model.generate_content_async(prompt_parts, stream=True)
 
-            if chunk.text:
-                chunk_count += 1
-                full_response_text += chunk.text
-                yield {"type": "content", "text": chunk.text}
-                # Ensure chunk is flushed immediately for real-time streaming
-                await asyncio.sleep(0)
+            async for chunk in response:
+                # Track tokens if available (Gemini 1.5/pro often provides this in chunks or at end)
+                if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
+                    input_tokens = chunk.usage_metadata.prompt_token_count or input_tokens
+                    output_tokens = (
+                        chunk.usage_metadata.candidates_token_count or output_tokens
+                    )
+
+                if chunk.text:
+                    chunk_count += 1
+                    full_response_text += chunk.text
+                    yield {"type": "content", "text": chunk.text}
+                    # Ensure chunk is flushed immediately for real-time streaming
+                    await asyncio.sleep(0)
 
         LOGGER.info(f"✅ Streamed {chunk_count} chunks for document chat")
 
@@ -550,6 +612,7 @@ async def stream_chat_with_specific_document(
         yield {"type": "error", "message": str(e)}
 
 
+@observe(name="chat_with_multiple_documents")
 def chat_with_multiple_documents(
     documents: list[Dict[str, Any]],
     query: str,
@@ -568,6 +631,7 @@ def chat_with_multiple_documents(
     - Dict with 'text', 'input_tokens', and 'output_tokens'
     """
     try:
+        mode = _llm_mode()
         # Limit to 3 documents
         if len(documents) > 3:
             LOGGER.warning(f"Received {len(documents)} documents, limiting to 3")
@@ -587,9 +651,11 @@ def chat_with_multiple_documents(
             "max_output_tokens": 8192,
         }
 
-        model = ggenai.GenerativeModel(
-            GEMINI_MODEL_NAME, generation_config=generation_config
-        )
+        model = None
+        if mode != "selfhost":
+            model = ggenai.GenerativeModel(
+                GEMINI_MODEL_NAME, generation_config=generation_config
+            )
 
         # Build context for all documents
         documents_context_parts = []
@@ -617,7 +683,7 @@ Document Metadata:
             documents_context_parts.append(doc_section)
 
             # Try to upload the actual file if URL is provided
-            if doc_url:
+            if doc_url and mode != "selfhost":
                 try:
                     resp = requests.get(doc_url)
                     resp.raise_for_status()
@@ -678,22 +744,31 @@ Instructions:
             )
             prompt_parts.append(uploaded_file)
 
-        response = _call_gemini_for_chat(prompt_parts, generation_config)
+        if mode == "selfhost":
+            text, input_tokens, output_tokens = _call_llm_for_chat(prompt, generation_config)
+            if not text:
+                return {
+                    "text": "I apologize, but I couldn't analyze your question. Please try rephrasing it.",
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                }
+        else:
+            response = _call_gemini_for_chat(prompt_parts, generation_config)
 
-        text = (response.text or "").strip()
-        if not text:
-            return {
-                "text": "I apologize, but I couldn't analyze your question. Please try rephrasing it.",
-                "input_tokens": 0,
-                "output_tokens": 0,
-            }
+            text = (response.text or "").strip()
+            if not text:
+                return {
+                    "text": "I apologize, but I couldn't analyze your question. Please try rephrasing it.",
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                }
 
-        # Extract token usage from response
-        usage_metadata = (
-            response.usage_metadata if hasattr(response, "usage_metadata") else None
-        )
-        input_tokens = usage_metadata.prompt_token_count if usage_metadata else 0
-        output_tokens = usage_metadata.candidates_token_count if usage_metadata else 0
+            # Extract token usage from response
+            usage_metadata = (
+                response.usage_metadata if hasattr(response, "usage_metadata") else None
+            )
+            input_tokens = usage_metadata.prompt_token_count if usage_metadata else 0
+            output_tokens = usage_metadata.candidates_token_count if usage_metadata else 0
 
         # Check if response is in English, translate if not
         is_english_result, detect_input_tokens, detect_output_tokens = _is_english(text)
@@ -729,6 +804,7 @@ Instructions:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@observe(name="stream_chat_with_multiple_documents", transform_to_string=_transform_stream_output)
 async def stream_chat_with_multiple_documents(
     documents: list[Dict[str, Any]],
     query: str,
@@ -745,6 +821,7 @@ async def stream_chat_with_multiple_documents(
     - document_url: str (optional) - URL to the original file (PDF/image)
     """
     try:
+        mode = _llm_mode()
         yield {"type": "status", "message": "Preparing multi-document analysis..."}
 
         # Limit documents based on context window constraints
@@ -910,51 +987,69 @@ Instructions:
 
         yield {"type": "status", "message": "Generating response..."}
 
-        # Stream response using Gemini 3 with thinking_level=minimal for fast responses
-        
-        response = gemini_client.models.generate_content_stream(
-            model=GEMINI_MODEL_NAME,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.3,
-                max_output_tokens=8192,
-                thinking_config=types.ThinkingConfig(
-                    thinking_level="minimal"  #  Options: 'MINIMAL', 'LOW', 'MEDIUM', 'HIGH'
-                )
-            )
-        )
-
         input_tokens = 0
         output_tokens = 0
         chunk_count = 0
         total_chars = 0
         full_response_text = ""
 
-        # Gemini 3's stream is synchronous, collect chunks in thread
-        def iterate_stream():
-            chunks = []
-            for chunk in response:
-                chunks.append(chunk)
-            return chunks
-        
-        chunks = await asyncio.to_thread(iterate_stream)
-        
-        for chunk in chunks:
-            # Track tokens if available
-            if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
-                input_tokens = getattr(chunk.usage_metadata, "prompt_token_count", 0) or input_tokens
-                output_tokens = getattr(chunk.usage_metadata, "candidates_token_count", 0) or output_tokens
+        if mode == "selfhost":
+            llm_client = get_chat_client()
+            async for item in llm_client.stream_chat_completion(
+                prompt, **generation_config
+            ):
+                if item["type"] == "content":
+                    chunk_count += 1
+                    chunk_len = len(item["text"])
+                    total_chars += chunk_len
+                    full_response_text += item["text"]
+                    yield {"type": "content", "text": item["text"]}
+                    await asyncio.sleep(0)
+                elif item["type"] == "token_usage":
+                    input_tokens = item.get("input_tokens", 0)
+                    output_tokens = item.get("output_tokens", 0)
+        else:
+            # Stream response using Gemini 3 with thinking_level=minimal for fast responses
+            response = gemini_client.models.generate_content_stream(
+                model=GEMINI_MODEL_NAME,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.3,
+                    max_output_tokens=8192,
+                    thinking_config=types.ThinkingConfig(
+                        thinking_level="minimal"  #  Options: 'MINIMAL', 'LOW', 'MEDIUM', 'HIGH'
+                    )
+                )
+            )
 
-            if hasattr(chunk, "text") and chunk.text:
-                chunk_count += 1
-                chunk_len = len(chunk.text)
-                total_chars += chunk_len
-                full_response_text += chunk.text
-                LOGGER.debug(f"📝 Chunk {chunk_count}: {chunk_len} chars")
-                yield {"type": "content", "text": chunk.text}
-                await asyncio.sleep(0)
+            # Gemini 3's stream is synchronous, collect chunks in thread
+            def iterate_stream():
+                chunks = []
+                for chunk in response:
+                    chunks.append(chunk)
+                return chunks
+
+            chunks = await asyncio.to_thread(iterate_stream)
+
+            for chunk in chunks:
+                # Track tokens if available
+                if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
+                    input_tokens = getattr(chunk.usage_metadata, "prompt_token_count", 0) or input_tokens
+                    output_tokens = getattr(chunk.usage_metadata, "candidates_token_count", 0) or output_tokens
+
+                if hasattr(chunk, "text") and chunk.text:
+                    chunk_count += 1
+                    chunk_len = len(chunk.text)
+                    total_chars += chunk_len
+                    full_response_text += chunk.text
+                    LOGGER.debug(f"📝 Chunk {chunk_count}: {chunk_len} chars")
+                    yield {"type": "content", "text": chunk.text}
+                    await asyncio.sleep(0)
 
         LOGGER.info(f"✅ Streamed {chunk_count} chunks ({total_chars} total chars) for multi-document chat")
+        
+        # Update Langfuse span with the full response output
+        update_current_span(output=full_response_text[:5000])  # Limit output size for Langfuse
 
         # Parse __CITATIONS__ from response if present (document title, page, excerpt)
         parsed_citations = []

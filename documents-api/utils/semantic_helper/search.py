@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Tuple
 
 from database import get_pool
+from utils.embeddings import embed_text_256d
 
 
 LOGGER = logging.getLogger(__name__)
@@ -12,13 +13,8 @@ LOGGER = logging.getLogger(__name__)
 
 async def semantic_search(query: str, understanding: Dict[str, Any], genai) -> List[Dict[str, Any]]:
     try:
-        embedding = genai.embed_content(
-            model="gemini-embedding-001",
-            content=query,
-            task_type="retrieval_query",
-            output_dimensionality=256,
-        )["embedding"]
-        embedding_str = "[" + ",".join(map(str, embedding)) + "]"
+        result = await embed_text_256d(query)
+        embedding_str = "[" + ",".join(map(str, result["embedding"])) + "]"
 
         sql_query, params = build_semantic_search_query(embedding_str, understanding)
 

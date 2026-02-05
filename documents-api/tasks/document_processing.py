@@ -564,14 +564,9 @@ async def write_document_to_db(
                 
                 # Generate embedding for the summary
                 try:
-                    from utils.embeddings import _call_gemini_embed_content
+                    from utils.embeddings import embed_text_256d
                     
-                    summary_result = await _call_gemini_embed_content(
-                        model_name="gemini-embedding-001",
-                        content=contract_summary,
-                        task_type="retrieval_document",
-                        output_dimensionality=256
-                    )
+                    summary_result = await embed_text_256d(contract_summary)
                     summary_embedding = "[" + ",".join(map(str, summary_result["embedding"])) + "]"
                     
                     # Update the summary with its embedding
@@ -581,7 +576,7 @@ async def write_document_to_db(
                             "embedding_model" = $2,
                             "updatedAt" = NOW()
                         WHERE id = $3
-                    """, summary_embedding, "gemini-embedding-001", summary_id)
+                    """, summary_embedding, summary_result["model_used"], summary_id)
                     
                     LOGGER.info(f"Generated and stored embedding for document summary {summary_id}")
                 except Exception as embedding_error:
