@@ -48,6 +48,7 @@ export default function TeamPage() {
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteName, setInviteName] = useState("");
+  const [invitePassword, setInvitePassword] = useState("");
   const [inviteRole, setInviteRole] = useState("MEMBER");
   const [isInviting, setIsInviting] = useState(false);
 
@@ -104,6 +105,7 @@ export default function TeamPage() {
         body: JSON.stringify({
           email: inviteEmail.trim(),
           name: inviteName.trim() || undefined,
+          password: invitePassword.trim() || undefined,
           role: inviteRole,
         }),
       });
@@ -115,6 +117,7 @@ export default function TeamPage() {
         });
         setInviteEmail("");
         setInviteName("");
+        setInvitePassword("");
         setInviteRole("MEMBER");
         setIsInviteDialogOpen(false);
         fetchTeamData();
@@ -416,6 +419,20 @@ export default function TeamPage() {
               />
             </div>
             <div className="space-y-2">
+              <Label htmlFor="invite-password">Password (Optional)</Label>
+              <Input
+                id="invite-password"
+                type="password"
+                placeholder="Leave blank to auto-generate and send via email"
+                value={invitePassword}
+                onChange={(e) => setInvitePassword(e.target.value)}
+                autoComplete="new-password"
+              />
+              <p className="text-xs text-muted-foreground">
+                Set a password for the invitee. If left blank, a random password will be generated and sent in the email.
+              </p>
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="invite-role">Role</Label>
               <Select value={inviteRole} onValueChange={setInviteRole}>
                 <SelectTrigger>
@@ -445,6 +462,7 @@ export default function TeamPage() {
                 setIsInviteDialogOpen(false);
                 setInviteEmail("");
                 setInviteName("");
+                setInvitePassword("");
                 setInviteRole("MEMBER");
               }}
             >

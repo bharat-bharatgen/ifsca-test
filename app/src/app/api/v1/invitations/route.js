@@ -72,7 +72,7 @@ export const POST = async (req) => {
     }
 
     const body = await req.json();
-    const { email, name, role = "MEMBER" } = body;
+    const { email, name, password: adminPassword, role = "MEMBER" } = body;
 
     if (!email) {
       return NextResponse.json(
@@ -133,8 +133,19 @@ export const POST = async (req) => {
       );
     }
 
-    // Generate password and token
-    const generatedPassword = generateSecurePassword();
+    // Use admin-provided password or generate one
+    if (adminPassword !== undefined && adminPassword !== null && String(adminPassword).trim() !== "") {
+      const pwd = String(adminPassword).trim();
+      if (pwd.length < 8) {
+        return NextResponse.json(
+          { error: "Password must be at least 8 characters" },
+          { status: 400 }
+        );
+      }
+    }
+    const generatedPassword = adminPassword && String(adminPassword).trim() !== ""
+      ? String(adminPassword).trim()
+      : generateSecurePassword();
     const hashedPassword = await hash(generatedPassword, 10);
     const invitationToken = generateToken(32);
 
