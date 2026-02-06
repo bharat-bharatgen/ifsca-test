@@ -162,7 +162,7 @@ export default function UIDashboard() {
       <DataTable data={tableRows} />
 
       <Dialog open={isUploadOpen} onOpenChange={setIsUploadOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-4xl">
           <DialogHeader>
             <DialogTitle>Upload and Analyze Document</DialogTitle>
           </DialogHeader>
