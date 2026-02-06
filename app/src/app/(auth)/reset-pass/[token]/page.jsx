@@ -103,7 +103,7 @@ const ResetPass = ({ params }) => {
           </div>
           <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col space-y-4">
             <div className="relative">
-              <Label htmlFor="password" className="font-medium text-purple-600">
+              <Label htmlFor="password" className="font-medium text-blue-600">
                 New Password
               </Label>
               <Input
@@ -113,14 +113,14 @@ const ResetPass = ({ params }) => {
                 placeholder="Enter your new password"
                 className={`block w-full mt-1 ${
                   errors.password ? "border-red-500" : "border-gray-300"
-                } focus:outline-none focus:ring-2 focus:ring-purple-500`}
+                } focus:outline-none focus:ring-2 focus:ring-blue-500`}
               />
               {errors.password && (
                 <p className="mt-2 text-sm text-red-500">{errors.password.message}</p>
               )}
             </div>
             <div className="relative">
-              <Label htmlFor="confirmPassword" className="font-medium text-purple-600">
+              <Label htmlFor="confirmPassword" className="font-medium text-blue-600">
                 Confirm Password
               </Label>
               <Input
@@ -130,7 +130,7 @@ const ResetPass = ({ params }) => {
                 placeholder="Confirm your new password"
                 className={`block w-full mt-1 ${
                   errors.confirmPassword ? "border-red-500" : "border-gray-300"
-                } focus:outline-none focus:ring-2 focus:ring-purple-500`}
+                } focus:outline-none focus:ring-2 focus:ring-blue-500`}
               />
               {errors.confirmPassword && (
                 <p className="mt-2 text-sm text-red-500">{errors.confirmPassword.message}</p>
@@ -139,7 +139,7 @@ const ResetPass = ({ params }) => {
             <Button
               type="submit"
               disabled={isSubmitting}
-              className="w-full px-4 py-3 text-white bg-purple-600 rounded-lg shadow-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
+              className="w-full px-4 py-3 text-white bg-blue-600 rounded-lg shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               {isSubmitting ? "Resetting..." : "Reset Password"}
             </Button>

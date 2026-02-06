@@ -113,7 +113,7 @@ const PricingInfo = ({ pricing }) => {
         className={cn(
           "max-w-72 max-h-200 h-full min-h-200 rounded-xl",
           pricing.recommended
-            ? "bg-primary shadow-2xl dark:shadow-purple-900 dark:shadow-lg border-primary"
+            ? "bg-primary shadow-2xl dark:shadow-blue-900 dark:shadow-lg border-primary"
             : ""
         )}
       >

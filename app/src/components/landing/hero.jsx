@@ -96,7 +96,7 @@ export const Hero = () => {
                 duration={1.5}
                 filter={false}
                 textSize="text-6xl"
-                textStyles="pb-4 font-bold text-transparent bg-gradient-to-tr from-orange-200 to-purple-600 bg-clip-text dark:from-orange-500 dark:to-purple-700"
+                textStyles="pb-4 font-bold text-transparent bg-gradient-to-tr from-orange-200 to-blue-600 bg-clip-text dark:from-orange-500 dark:to-blue-700"
                 words="Eliminate Contract Risks with AI Automation"
               />
               <TextGenerateEffect

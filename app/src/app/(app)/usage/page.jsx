@@ -314,7 +314,7 @@ export default function UsagePage() {
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div>
                           <p className="text-sm text-muted-foreground mb-1">Input Tokens</p>
-                          <p className="text-2xl font-bold text-purple-600">
+                          <p className="text-2xl font-bold text-blue-600">
                             {(tokenUsage.documentUpload?.inputTokens || 0).toLocaleString()}
                           </p>
                           <p className="text-sm text-muted-foreground mt-1">
@@ -323,7 +323,7 @@ export default function UsagePage() {
                         </div>
                         <div>
                           <p className="text-sm text-muted-foreground mb-1">Output Tokens</p>
-                          <p className="text-2xl font-bold text-purple-600">
+                          <p className="text-2xl font-bold text-blue-600">
                             {(tokenUsage.documentUpload?.outputTokens || 0).toLocaleString()}
                           </p>
                           <p className="text-sm text-muted-foreground mt-1">
@@ -332,7 +332,7 @@ export default function UsagePage() {
                         </div>
                         <div>
                           <p className="text-sm text-muted-foreground mb-1">Total Tokens</p>
-                          <p className="text-2xl font-bold text-purple-600">
+                          <p className="text-2xl font-bold text-blue-600">
                             {(tokenUsage.documentUpload?.totalTokens || 0).toLocaleString()}
                           </p>
                           <p className="text-sm text-muted-foreground mt-1">
