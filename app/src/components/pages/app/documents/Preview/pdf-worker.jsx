@@ -1,123 +1,17 @@
 "use client";
-
-import React, { useState, useEffect } from "react";
-import {
-  Viewer,
-  Worker,
-} from "@react-pdf-viewer/core";
-import { defaultLayoutPlugin } from "@react-pdf-viewer/default-layout";
-import {
-  ZoomIn,
-  ZoomOut,
-  LoaderIcon,
-} from "lucide-react";
-import { Button as ShadcnButton } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { useState } from "react";
+import dynamic from "next/dynamic";
+import { ZoomIn, ZoomOut } from "lucide-react";
+import { Button } from "@/components/chat/primitives";
 import { useDocumentContext } from "./context";
-
-import "@react-pdf-viewer/core/lib/styles/index.css";
-import "@react-pdf-viewer/default-layout/lib/styles/index.css";
-
-export const PdfWorker = () => {
+const PdfViewer = dynamic(() => import("@/components/chat/pdf-viewer"), { ssr: false });
+function ImageViewer({ url }) {
+  const [scale, setScale] = useState(1);
+  return <div className="flex h-full flex-col"><div className="flex justify-end gap-2 border-b p-2"><Button variant="ghost" size="icon" aria-label="Zoom out" disabled={scale <= 0.5} onClick={() => setScale(n => Math.max(0.5, n - 0.25))}><ZoomOut className="size-4" /></Button><Button variant="ghost" size="icon" aria-label="Zoom in" disabled={scale >= 3} onClick={() => setScale(n => Math.min(3, n + 0.25))}><ZoomIn className="size-4" /></Button></div><div className="flex-1 overflow-auto p-4"><img src={url} alt="Document preview" style={{ width: `${scale * 100}%`, maxWidth: "none" }} /></div></div>;
+}
+export function PdfWorker() {
   const { document } = useDocumentContext();
-  const [fileType, setFileType] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    if (document) {
-      setIsLoading(false);
-      // Detect file type from URL
-      const url = document.documentUrl?.toLowerCase();
-      if (url?.endsWith('.pdf')) {
-        setFileType('pdf');
-      } else if (url?.endsWith('.jpg') || url?.endsWith('.jpeg') || url?.endsWith('.png')) {
-        setFileType('image');
-      }
-    }
-  }, [document]);
-
-  const transform = (slot) => ({
-    ...slot,
-    Open: () => <></>,
-    Print: () => <></>,
-    Download: () => <></>,
-    DownloadMenuItem: () => <></>,
-  });
-
-  const defaultLayoutPluginInstance = defaultLayoutPlugin({});
-
-  const { renderDefaultToolbar } =
-    defaultLayoutPluginInstance.toolbarPluginInstance;
-
-  const renderToolbar = (Toolbar) => (
-    <Toolbar>{renderDefaultToolbar(transform)}</Toolbar>
-  );
-
-  // Recreate plugin with toolbar
-  const defaultLayoutPluginWithToolbar = defaultLayoutPlugin({
-    renderToolbar,
-  });
-
-  // Create an Image Viewer component
-  const ImageViewer = () => {
-    const [scale, setScale] = useState(1);
-    
-    const handleZoomIn = () => {
-      setScale(prev => Math.min(prev + 0.1, 3));
-    };
-    
-    const handleZoomOut = () => {
-      setScale(prev => Math.max(prev - 0.1, 0.5));
-    };
-  
-    return (
-      <div className="h-[90vh] flex flex-col">
-        <div className="flex justify-end gap-2 p-2 bg-gray-100 dark:bg-gray-900">
-          <ShadcnButton onClick={handleZoomOut} variant="outline" size="sm">
-            <ZoomOut className="w-4 h-4" />
-          </ShadcnButton>
-          <ShadcnButton onClick={handleZoomIn} variant="outline" size="sm">
-            <ZoomIn className="w-4 h-4" />
-          </ShadcnButton>
-        </div>
-        <div className="flex-1 overflow-auto">
-          <div className="relative flex items-center justify-center min-h-full">
-            <img
-              src={document.documentUrl}
-              alt="Document"
-              className="object-contain transition-transform duration-200"
-              style={{ 
-                transform: `scale(${scale})`,
-                maxHeight: '85vh'
-              }}
-            />
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  if (isLoading || !document?.documentUrl) {
-    return (
-      <Card className="h-[90vh] flex items-center justify-center">
-        <LoaderIcon className="w-8 h-8 animate-spin" />
-      </Card>
-    );
-  }
-
-  if (fileType === 'image') {
-    return <ImageViewer />;
-  }
-
-  return (
-    <Card className="h-[90vh] overflow-hidden">
-      <Worker workerUrl="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js">
-        <Viewer
-          fileUrl={document.documentUrl}
-          plugins={[defaultLayoutPluginWithToolbar]}
-        />
-      </Worker>
-    </Card>
-  );
-};
-
+  const url = document?.documentUrl;
+  const isImage = url && /\.(png|jpe?g|webp)(?:[?#]|$)/i.test(url);
+  return <section aria-label="Document preview" className="chat-workspace h-[90dvh] min-w-0 overflow-hidden rounded-2xl border">{!url ? <p className="p-6 text-sm text-muted-foreground">Document preview is unavailable.</p> : isImage ? <ImageViewer key={url} url={url} /> : <PdfViewer url={url} />}</section>;
+}

@@ -62,6 +62,9 @@ export const POST = async (req) => {
   const stream = new ReadableStream({
     async start(controller) {
       try {
+        // Establish identity before the response can be stopped in the UI.
+        controller.enqueue(encoder.encode(`__CONV_ID__:${convId}\n`));
+
         // Send initial status immediately (this is what fixes TTFB)
         controller.enqueue(
           encoder.encode("__STATUS__:Processing your request...\n"),

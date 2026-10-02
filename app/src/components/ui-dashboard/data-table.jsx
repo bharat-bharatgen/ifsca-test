@@ -29,9 +29,9 @@ export function DataTable({ data }) {
   const columnBgClasses = [
     "", // File #
     "", // Date
-    "bg-muted/40", // Type of Document
+    "", // Type of Document
     "", // Customer Name
-    "bg-muted/40", // Location
+    "", // Location
     "", // Summary
     "", // Review Status
     "", // Actions
@@ -43,10 +43,10 @@ export function DataTable({ data }) {
         <TableHeader className="bg-secondary/40">
           <TableRow className="hover:bg-secondary/40">
             <TableHead className="font-semibold">
-              File # <ChevronDown className="inline h-4 w-4 ml-1" />
+              Document
             </TableHead>
             <TableHead className="font-semibold">
-              Date <ChevronDown className="inline h-4 w-4 ml-1" />
+              Uploaded
             </TableHead>
             <TableHead className="font-semibold">Type of Document</TableHead>
             <TableHead className="font-semibold">Customer Name</TableHead>
@@ -59,7 +59,7 @@ export function DataTable({ data }) {
         <TableBody>
           {data.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+              <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                 No documents found. Upload your first document to get started.
               </TableCell>
             </TableRow>
@@ -67,7 +67,7 @@ export function DataTable({ data }) {
             data.map((file, index) => (
               <TableRow 
                 key={file.documentId || `row-${index}`} 
-                className={`border-dotted hover:bg-muted/50`}
+                className={`hover:bg-muted/50`}
               >
                 <TableCell className={`font-medium ${columnBgClasses[0]}`}>{file.id}</TableCell>
                 <TableCell className={`${columnBgClasses[1]}`}>{file.date}</TableCell>

@@ -173,15 +173,19 @@ export function parseSourceDocs(message) {
   if (startBracket === -1) return null;
   let depth = 0;
   let endBracket = -1;
+  let quoted = false;
+  let escaped = false;
   for (let i = startBracket; i < afterMarker.length; i++) {
-    if (afterMarker[i] === "[") depth++;
-    else if (afterMarker[i] === "]") {
-      depth--;
-      if (depth === 0) {
-        endBracket = i;
-        break;
-      }
+    const char = afterMarker[i];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') quoted = false;
+      continue;
     }
+    if (char === '"') quoted = true;
+    else if (char === "[") depth++;
+    else if (char === "]" && --depth === 0) { endBracket = i; break; }
   }
   if (endBracket === -1) return null;
   try {

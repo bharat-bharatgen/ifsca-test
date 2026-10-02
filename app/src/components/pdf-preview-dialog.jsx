@@ -1,22 +1,12 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogTitle } from "@/components/chat/primitives";
+import { Button } from "@/components/chat/primitives";
 import { LoaderIcon } from "lucide-react";
 import dynamic from "next/dynamic";
 
-const PdfViewer = dynamic(
-  () =>
-    import("@react-pdf-viewer/core").then((mod) => mod.Viewer),
-  { ssr: false }
-);
-const Worker = dynamic(
-  () => import("@react-pdf-viewer/core").then((mod) => mod.Worker),
-  { ssr: false }
-);
-
-import "@react-pdf-viewer/core/lib/styles/index.css";
+const PdfViewer = dynamic(() => import("@/components/chat/pdf-viewer"), { ssr: false });
 
 export function PdfPreviewDialog({ open, onOpenChange, sourceDoc }) {
   const [pdfUrl, setPdfUrl] = useState(null);
@@ -30,8 +20,12 @@ export function PdfPreviewDialog({ open, onOpenChange, sourceDoc }) {
       return;
     }
 
+    const controller = new AbortController();
+    setPdfUrl(null);
+    setError(null);
     const loadUrl = async () => {
       if (sourceDoc.url) {
+        setIsLoading(false);
         setPdfUrl(sourceDoc.url);
         return;
       }
@@ -39,16 +33,17 @@ export function PdfPreviewDialog({ open, onOpenChange, sourceDoc }) {
         setIsLoading(true);
         setError(null);
         try {
-          const res = await fetch(`/api/v1/documents/${sourceDoc.id}`);
+          const res = await fetch(`/api/v1/documents/${encodeURIComponent(sourceDoc.id)}`, { signal: controller.signal });
           if (!res.ok) throw new Error("Document not found");
           const data = await res.json();
           const url = data?.document?.documentUrl;
+          if (controller.signal.aborted) return;
           if (url) setPdfUrl(url);
           else setError("Document URL not available");
         } catch (e) {
-          setError(e.message || "Failed to load document");
+          if (e.name !== "AbortError") setError(e.message || "Failed to load document");
         } finally {
-          setIsLoading(false);
+          if (!controller.signal.aborted) setIsLoading(false);
         }
       } else {
         setError("No document URL or ID provided");
@@ -56,25 +51,26 @@ export function PdfPreviewDialog({ open, onOpenChange, sourceDoc }) {
     };
 
     loadUrl();
+    return () => controller.abort();
   }, [open, sourceDoc]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         blurOverlay={true}
-        className="sm:max-w-[90vw] max-h-[90vh] overflow-hidden flex flex-col p-0"
+        className="sm:max-w-[90vw] max-h-[90dvh] overflow-hidden flex flex-col p-0"
       >
         <DialogTitle className="px-6 py-4 border-b">
           {sourceDoc?.label || "Document Preview"}
         </DialogTitle>
         <div className="flex-1 min-h-0 overflow-auto p-4 flex flex-col gap-4">
           {isLoading && (
-            <div className="flex items-center justify-center h-[70vh]">
+            <div className="flex items-center justify-center h-[70dvh]">
               <LoaderIcon className="w-10 h-10 animate-spin text-muted-foreground" />
             </div>
           )}
           {error && (
-            <div className="flex flex-col items-center justify-center h-[70vh] gap-2 text-muted-foreground">
+            <div className="flex flex-col items-center justify-center h-[70dvh] gap-2 text-muted-foreground">
               <p>{error}</p>
               <Button variant="outline" onClick={() => onOpenChange(false)}>
                 Close
@@ -82,10 +78,8 @@ export function PdfPreviewDialog({ open, onOpenChange, sourceDoc }) {
             </div>
           )}
           {pdfUrl && !isLoading && !error && (
-            <div className="h-[75vh] overflow-hidden rounded-lg border">
-              <Worker workerUrl="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js">
-                <PdfViewer fileUrl={pdfUrl} />
-              </Worker>
+            <div className="h-[65dvh] shrink-0 overflow-hidden rounded-lg border">
+              <PdfViewer url={pdfUrl} initialPage={sourceDoc?.citations?.find(c => Number.isInteger(c.page) && c.page > 0)?.page || 1} />
             </div>
           )}
           {sourceDoc?.citations && sourceDoc.citations.length > 0 && (

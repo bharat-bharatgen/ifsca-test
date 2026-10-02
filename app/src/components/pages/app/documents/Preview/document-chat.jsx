@@ -1,369 +1,83 @@
 "use client";
-
-import { useEffect, useRef, useState } from "react";
-import { Input } from "@/components/ui/input";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from "@/components/ui/card";
-import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
-import Markdown from "react-markdown";
-import { LoaderIcon } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Streamdown } from "streamdown";
+import { ChatComposer } from "@/components/chat/chat-composer";
+import { CopyMessage } from "@/components/chat/copy-message";
+import { createChatStreamParser } from "@/lib/chat-stream.mjs";
 import { useDocumentContext } from "./context";
-import { env } from "@/env.mjs";
+import { Button } from "@/components/ui/button";
 
 export const DocumentChat = () => {
-  const { document, documentChats, session, setSendMessageToAI } =
-    useDocumentContext();
-  const [chats, setChats] = useState([
-    {
-      message: `Hi! I'm ${env.NEXT_PUBLIC_APP_NAME}, your AI assistant. I can help you with any questions you have about your document.`,
-      sender: "AGENT",
-    },
-    ...documentChats,
-  ]);
+  const context = useDocumentContext();
+  return <DocumentChatSession key={context.document.id} {...context} />;
+};
+function DocumentChatSession({ document, documentChats, setSendMessageToAI }) {
+  const [chats, setChats] = useState(() => (documentChats || []).map(chat => ({ ...chat, id: chat.id || crypto.randomUUID() })));
   const [message, setMessage] = useState("");
-  const [isSending, setIsSending] = useState(false);
-  const [status, setStatus] = useState("");
-  const messageListRef = useRef();
-  const sendButtonRef = useRef();
-
-  const scrollToBottom = (event) => {
-    if (!event) {
-      messageListRef.current.scroll({
-        top: messageListRef.current.scrollHeight,
-        behavior: "smooth",
-      });
-      return;
-    }
-
-    const { currentTarget: target } = event;
-    target.scroll({ top: target.scrollHeight, behavior: "smooth" });
-  };
-
-  const sendMessageToAI = async () => {
+  const [busy, setBusy] = useState(false);
+  const [away, setAway] = useState(false);
+  const viewport = useRef(null);
+  const input = useRef(null);
+  const abort = useRef(null);
+  const locked = useRef(false);
+  const follow = useRef(true);
+  const initialChats = useRef(documentChats);
+  const sent = useRef(false);
+  const latest = () => { if (viewport.current) viewport.current.scrollTop = viewport.current.scrollHeight; follow.current = true; setAway(false); };
+  useEffect(() => {
+    if (follow.current && viewport.current) viewport.current.scrollTop = viewport.current.scrollHeight;
+  }, [chats]);
+  useEffect(() => {
+    const controller = new AbortController();
+    setChats((initialChats.current || []).map(chat => ({ ...chat, id: chat.id || crypto.randomUUID() })));
+    fetch(`/api/v1/chat/history?documentId=${encodeURIComponent(document.id)}`, { signal: controller.signal })
+      .then(async response => { if (!response.ok) throw new Error("Could not load chat history"); return response.json(); })
+      .then(data => { if (!controller.signal.aborted && !sent.current) setChats((data.chats || []).map(chat => ({ ...chat, id: chat.id || crypto.randomUUID() }))); })
+      .catch(error => { if (error.name !== "AbortError") setChats(prev => [...prev, { id: crypto.randomUUID(), sender: "AGENT", error: "Could not load history. Try reopening this document." }]); });
+    return () => { controller.abort(); abort.current?.abort(); };
+  }, [document.id]);
+  const send = useCallback(async (content) => {
+    if (!content.trim() || locked.current) return;
+    locked.current = true;
+    sent.current = true;
+    setBusy(true); setMessage(""); follow.current = true;
+    const id = crypto.randomUUID();
+    const controller = new AbortController(); abort.current = controller;
+    setChats(prev => [...prev, { id: `${id}-user`, sender: "USER", message: content }, { id, sender: "AGENT", message: "", status: "Searching document…", isStreaming: true }]);
+    let fullText = "";
+    const update = patch => { if (!controller.signal.aborted) setChats(prev => prev.map(chat => chat.id === id ? { ...chat, ...patch } : chat)); };
     try {
-      const body = JSON.stringify({
-        message,
-        documentId: document.id,
-      });
-      const response = await fetch("/api/v1/chat/document", {
-        method: "POST",
-        body: body,
-        headers: {
-          "Content-Type": "application/json",
-        },
-      });
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder("utf-8");
-
-      let fullText = "";
-      const timeStart = Date.now();
-
-      setStatus("Thinking...");
-
-      // Add placeholder for streaming message
-      setChats((prevChats) => [
-        ...prevChats,
-        {
-          message: "",
-          sender: "AGENT",
-          id: timeStart,
-          isStreaming: true,
-          status: "Thinking...",
-        },
-      ]);
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const chunk = decoder.decode(value, { stream: true });
-
-          let processedChunk = chunk;
-          let currentStatus = null;
-
-          // Check for Status updates
-          const statusMatch = processedChunk.match(/__STATUS__:([^\n]+)/);
-          if (statusMatch) {
-            currentStatus = statusMatch[1].trim();
-            setStatus(currentStatus);
-            processedChunk = processedChunk.replace(
-              /__STATUS__:[^\n]*\n?/g,
-              "",
-            );
-          }
-
-          // Filter out token usage markers while preserving formatting
-          processedChunk = processedChunk.replace(
-            /__TOKEN_USAGE__:[^\n]*\n?/g,
-            "",
-          );
-
-          if (processedChunk && processedChunk.trim()) {
-            fullText += processedChunk;
-            // Clear status when actual content starts streaming
-            setChats((prevChats) =>
-              prevChats.map((chat) =>
-                chat.id === timeStart
-                  ? { ...chat, message: fullText, status: null }
-                  : chat,
-              ),
-            );
-          } else if (currentStatus) {
-            // Only status update, no content yet
-            setChats((prevChats) =>
-              prevChats.map((chat) =>
-                chat.id === timeStart
-                  ? { ...chat, status: currentStatus }
-                  : chat,
-              ),
-            );
-          }
-        }
-      } catch (error) {
-        // Optionally log or handle the error here if needed
-        throw error;
-      } finally {
-        // Mark streaming as complete
-        setStatus("");
-        setChats((prevChats) =>
-          prevChats.map((chat) =>
-            chat.id === timeStart
-              ? { ...chat, isStreaming: false, status: null }
-              : chat,
-          ),
-        );
-      }
+      const response = await fetch("/api/v1/chat/document", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: content, documentId: document.id }), signal: controller.signal });
+      if (!response.ok || !response.body) throw new Error("Request failed");
+      const parser = createChatStreamParser(text => { fullText += text; update({ message: fullText, status: null }); }, (key, value) => { if (key === "STATUS") update({ status: value }); });
+      const reader = response.body.getReader(); const decoder = new TextDecoder();
+      while (true) { const { done, value } = await reader.read(); if (done) break; parser.push(decoder.decode(value, { stream: true })); }
+      parser.push(decoder.decode()); parser.finish();
     } catch (error) {
-      console.log(error);
+      setChats(prev => prev.map(chat => chat.id === id ? { ...chat, error: error.name === "AbortError" ? "Response stopped." : "Connection interrupted. Your partial response is kept." } : chat));
     } finally {
-      setMessage("");
-      setIsSending(false);
-      setStatus("");
+      setChats(prev => prev.map(chat => chat.id === id ? { ...chat, isStreaming: false, status: null } : chat));
+      locked.current = false; setBusy(false); abort.current = null; input.current?.focus();
     }
-  };
-
+  }, [document.id]);
   useEffect(() => {
-    if (messageListRef) {
-      messageListRef.current.addEventListener("DOMNodeInserted", (event) => {
-        scrollToBottom(event);
-      });
-    }
-  }, []);
-
-  useEffect(() => {
-    const fetchChats = async () => {
-      try {
-        const response = await fetch(
-          `/api/v1/chat/history?documentId=${document.id}`,
-        );
-        if (response.ok) {
-          const data = await response.json();
-          setChats((prev) => [...prev, ...data.chats]);
-        }
-      } catch (error) {
-        console.error("Error fetching chat history:", error);
-      } finally {
-        setIsSending(false);
-      }
-    };
-
-    if (document?.id) {
-      fetchChats();
-    }
-  }, [document?.id]);
-
-  const stimulateMessageToAI = async (message) => {
-    setMessage(message);
-    setTimeout(async () => {
-      sendButtonRef.current.click();
-    }, 1000);
-  };
-
-  useEffect(() => {
-    setSendMessageToAI({
-      caller: async (message) => await stimulateMessageToAI(message),
-    });
-  }, []);
-
-  const submitMessage = async () => {
-    if (isSending) return;
-    if (message.trim() === "") return;
-    setIsSending(true);
-    setChats((prevChats) => [
-      ...prevChats,
-      { message: message, sender: "USER" },
-    ]);
-    await sendMessageToAI();
-  };
-
-  return (
-    <Card id="ai-chat-box" className="p-0 space-y-4 rounded-lg lg:col-span-2">
-      <CardHeader>
-        <CardTitle>Chat About Document</CardTitle>
-        <CardDescription>
-          Ask any questions you have about your document
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="p-0 py-4 md:p-6">
-        <div className="flex flex-col justify-between h-[25rem] overflow-hidden">
-          <div
-            ref={messageListRef}
-            id="chat-container"
-            className="h-full py-4 space-y-4 overflow-y-scroll md:p-4"
-            style={{
-              overflowAnchor: "auto",
-            }}
-          >
-            {chats.map((chat, index) => (
-              <ChatMessage
-                key={index}
-                message={chat.message}
-                sender={chat.sender}
-                user={session.user}
-                isStreaming={chat.isStreaming}
-                status={chat.status}
-              />
-            ))}
-          </div>
-        </div>
-        <div className="flex items-center mx-4 mt-4 space-x-2 md:mx-0">
-          <Input
-            disabled={isSending}
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            onKeyDown={async (e) => {
-              if (e.key === "Enter") {
-                await submitMessage();
-              }
-            }}
-            placeholder="Send your questions"
-            className="flex-1"
-          />
-          <Button
-            ref={sendButtonRef}
-            disabled={isSending || message.trim() === ""}
-            onClick={submitMessage}
-          >
-            {isSending ? (
-              <LoaderIcon className="w-5 h-5 animate-spin" />
-            ) : (
-              <ArrowUpIcon className="w-5 h-5" />
-            )}
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  );
-};
-
-const ChatMessage = ({
-  message,
-  sender,
-  user,
-  isStreaming = false,
-  status = null,
-}) => {
-  // Show typing indicator when streaming starts before content arrives
-  const showTypingIndicator = isStreaming && !message && !status;
-  // Show status indicator when there's an active status
-  const showStatusIndicator = isStreaming && status;
-  // Show message bubble only if there's content
-  const showMessageBubble = message || showTypingIndicator;
-
-  return (
-    <div
-      className={cn(
-        "flex items-start space-x-2",
-        sender === "AGENT" ? "flex-row-reverse" : "flex-row",
-      )}
-      style={{
-        justifyContent: sender === "AGENT" ? "start" : "end",
-        transform: "translateZ(0)",
-      }}
-    >
-      <div className="flex flex-col gap-1 max-w-[80%]">
-        {/* Status indicator - shown above message bubble during processing */}
-        {showStatusIndicator && (
-          <div className="flex items-center gap-2 px-3 py-2 text-xs duration-200 rounded-lg text-muted-foreground bg-muted/50 animate-in fade-in">
-            <div className="flex gap-1">
-              <span
-                className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce"
-                style={{ animationDelay: "0ms" }}
-              ></span>
-              <span
-                className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce"
-                style={{ animationDelay: "150ms" }}
-              ></span>
-              <span
-                className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce"
-                style={{ animationDelay: "300ms" }}
-              ></span>
-            </div>
-            <span className="animate-pulse">{status}</span>
-          </div>
-        )}
-
-        {/* Message bubble - shown when there's content or typing */}
-        {showMessageBubble && (
-          <div className="p-3 text-sm bg-gray-100 rounded-lg dark:bg-gray-900 text-foreground">
-            <Markdown>{message}</Markdown>
-            {showTypingIndicator && (
-              <div className="flex items-center h-4 gap-1">
-                <span
-                  className="w-2 h-2 bg-current rounded-full animate-bounce"
-                  style={{ animationDelay: "0ms" }}
-                ></span>
-                <span
-                  className="w-2 h-2 bg-current rounded-full animate-bounce"
-                  style={{ animationDelay: "150ms" }}
-                ></span>
-                <span
-                  className="w-2 h-2 bg-current rounded-full animate-bounce"
-                  style={{ animationDelay: "300ms" }}
-                ></span>
-              </div>
-            )}
-            {/* Streaming cursor when content is being added */}
-            {isStreaming && message && (
-              <span className="inline-block w-0.5 h-4 ml-0.5 bg-primary animate-pulse" />
-            )}
-          </div>
-        )}
+    setSendMessageToAI({ caller: send });
+    return () => setSendMessageToAI({ caller: async () => {} });
+  }, [send, setSendMessageToAI]);
+  return <section id="ai-chat-box" className="chat-workspace flex min-w-0 flex-col rounded-2xl border lg:col-span-2">
+    <header className="border-b px-5 py-4"><h2 className="font-semibold">Chat with this document</h2><p className="mt-1 truncate text-xs text-muted-foreground">{document.title || "Ask a question, summarize, or explore a detail."}</p></header>
+    <div className="relative">
+      <div ref={viewport} className="h-[25rem] overflow-y-auto overflow-x-hidden px-4 py-6" onScroll={e => { const el = e.currentTarget; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100; setAway(!follow.current); }}>
+        {!chats.length && <p className="py-12 text-center text-sm text-muted-foreground">What would you like to understand about this document?</p>}
+        <div className="space-y-6">{chats.map((chat) => <article key={chat.id} className={chat.sender === "USER" ? "ml-auto w-fit max-w-[90%] rounded-2xl bg-muted px-4 py-3 text-sm whitespace-pre-wrap" : "document-response min-w-0 text-sm leading-7"}>
+          {chat.sender === "USER" ? chat.message : <Streamdown mode={chat.isStreaming ? "streaming" : "static"} isAnimating={chat.isStreaming}>{chat.message || ""}</Streamdown>}
+          {chat.status && <p role="status" className="text-xs text-muted-foreground">{chat.status}</p>}
+          {chat.error && <p role="status" className="text-sm text-muted-foreground">{chat.error}</p>}
+          {chat.sender === "AGENT" && chat.message && !chat.isStreaming && <CopyMessage text={chat.message} />}
+        </article>)}</div>
       </div>
-      <Avatar>
-        <AvatarImage src={sender === "AGENT" ? "/icon.png" : user.image} />
-        <AvatarFallback>
-          {sender === "AGENT" ? "AI" : user.name[0]}
-        </AvatarFallback>
-      </Avatar>
+      {away && <Button size="sm" variant="secondary" className="absolute bottom-2 left-1/2 -translate-x-1/2" onClick={latest}>Jump to latest ↓</Button>}
     </div>
-  );
+    <div className="p-3"><ChatComposer ref={input} value={message} onChange={setMessage} busy={busy} onStop={() => abort.current?.abort()} onSend={() => send(message)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(message); } }} /><p className="pt-2 text-center text-xs text-muted-foreground">Check important details against your document.</p></div>
+  </section>;
 };
-
-function ArrowUpIcon(props) {
-  return (
-    <svg
-      {...props}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="m5 12 7-7 7 7" />
-      <path d="M12 19V5" />
-    </svg>
-  );
-}

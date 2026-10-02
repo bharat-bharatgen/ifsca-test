@@ -1,31 +1,31 @@
 # Stage 1: Dependencies
 # Install dependencies only when needed
-FROM node:20-alpine AS deps
+FROM node:24-alpine AS deps
 WORKDIR /app
 # Install pnpm globally
-RUN npm install -g pnpm --force
+RUN npm install -g pnpm@10.34.6 --force
 COPY package.json pnpm-lock.yaml ./
-RUN pnpm install
+RUN pnpm install --frozen-lockfile
 
 # Stage 2: Build
 # Rebuild the source code only when needed
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 # Install pnpm globally in the builder stage
-RUN npm install -g pnpm --force
+RUN npm install -g pnpm@10.34.6 --force
 ENV CI=true
 RUN apk add --no-cache openssl
 COPY package.json pnpm-lock.yaml ./
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED 1
-RUN pnpm install
+RUN pnpm install --frozen-lockfile
 RUN npx prisma generate
 RUN pnpm run build
 
 # Stage 3: Deploy & Run
 # Production image, copy all the files and run next
-FROM node:20-alpine AS runner
+FROM node:24-alpine AS runner
 WORKDIR /app
 # Install OpenSSL for Prisma
 RUN apk add --no-cache openssl

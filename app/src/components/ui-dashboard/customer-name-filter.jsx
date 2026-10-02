@@ -19,11 +19,12 @@ export function CustomerNameFilter({
       <div className="relative">
         <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input
+          aria-label="Search customer name"
           type="text"
           placeholder={placeholder}
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className="pl-10 pr-10"
+          className="w-64 max-w-full pl-10 pr-10"
         />
         {value && (
           <Button

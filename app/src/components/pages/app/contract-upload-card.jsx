@@ -16,7 +16,7 @@ import {
   Folder,
   X,
   Loader as LoaderIcon
-} from "lucide-react"; 
+} from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 import { useProgressTracker } from "@/components/progress-tracker";
 import { cn } from "@/lib/utils";
@@ -24,9 +24,9 @@ import { Celebrate } from "@/components/celebrate";
 import { getSession } from "next-auth/react";
 import { DuplicateUploadDialog } from "@/components/ui/duplicate-upload-dialog";
 import {
-  saveTaskToStorage, 
-  getTasksFromStorage, 
-  getTaskFromStorage, 
+  saveTaskToStorage,
+  getTasksFromStorage,
+  getTaskFromStorage,
   removeTaskFromStorage,
 } from "@/lib/indexeddb-utils";
 import { trackTaskProgress as trackTaskProgressUtil } from "@/lib/task-progress";
@@ -66,10 +66,10 @@ export const ContractUploadCard = ({ onUploadComplete }) => {
   const handleFileChange = (event) => {
     const files = Array.from(event.target.files);
     const validTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg'];
-    
+
     const validFiles = files.filter(file => validTypes.includes(file.type));
     const invalidFiles = files.filter(file => !validTypes.includes(file.type));
-    
+
     if (invalidFiles.length > 0) {
       toast({
         title: "Some files were skipped",
@@ -93,10 +93,10 @@ export const ContractUploadCard = ({ onUploadComplete }) => {
     setInputDragged(false);
     const files = Array.from(event.dataTransfer.files);
     const validTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg'];
-    
+
     const validFiles = files.filter(file => validTypes.includes(file.type));
     const invalidFiles = files.filter(file => !validTypes.includes(file.type));
-    
+
     if (invalidFiles.length > 0) {
       toast({
         title: "Some files were skipped",
@@ -177,7 +177,7 @@ export const ContractUploadCard = ({ onUploadComplete }) => {
         // User chose to upload anyway - retry with forceUpload flag
         data = await makeRequest(true);
       }
-      
+
       if (data.message === "failure") {
         return {
           success: false,
@@ -186,7 +186,7 @@ export const ContractUploadCard = ({ onUploadComplete }) => {
           index,
         };
       }
-      
+
       if (data.message === "task_started" && data.task_id) {
         // Immediately persist the task to IndexedDB so it survives page reloads,
         // even if the overall upload flow hasn't finished yet
@@ -213,7 +213,7 @@ export const ContractUploadCard = ({ onUploadComplete }) => {
           index,
         };
       }
-      
+
       return {
         success: false,
         error: "Unknown response format",
@@ -269,10 +269,10 @@ export const ContractUploadCard = ({ onUploadComplete }) => {
       setIsLoading(true);
       document.body.style.pointerEvents = "none";
       if (selectedFiles.length === 0) return;
-      
+
       const total = selectedFiles.length;
       const completedRef = { current: 0 };
-      
+
       // Upload all files (duplicate detection happens per-file in uploadSingleFile)
       const uploadResults = [];
       for (let i = 0; i < selectedFiles.length; i++) {
@@ -282,12 +282,12 @@ export const ContractUploadCard = ({ onUploadComplete }) => {
         const result = await uploadSingleFile(file, i + 1, selectedFiles.length);
         uploadResults.push(result);
       }
-      
+
       // Separate successful, skipped (user-cancelled), and failed uploads
       const successfulUploads = uploadResults.filter(r => r.success && r.taskId);
       const skippedUploads = uploadResults.filter(r => r.skipped);
       const failedUploads = uploadResults.filter(r => !r.success && !r.skipped);
-      
+
       // Show errors only for real failed uploads (not user-cancelled ones)
       failedUploads.forEach((result) => {
         toast({
@@ -296,7 +296,7 @@ export const ContractUploadCard = ({ onUploadComplete }) => {
           variant: "destructive",
         });
       });
-      
+
       if (successfulUploads.length === 0) {
         // If everything was skipped (e.g., user rejected all duplicates), don't show error toasts
         if (failedUploads.length === 0 && skippedUploads.length > 0) {
@@ -317,7 +317,7 @@ export const ContractUploadCard = ({ onUploadComplete }) => {
         }
         return;
       }
-      
+
       // Step 2: Start tracking all tasks in parallel FIRST (toasts are created inside trackTaskProgress)
       // This ensures WebSocket subscriptions are created before the dialog closes
       const trackingPromises = successfulUploads.map((taskInfo) => {
@@ -332,31 +332,31 @@ export const ContractUploadCard = ({ onUploadComplete }) => {
           return promise;
         } catch (error) {
           console.error(`Error starting tracking for task ${taskInfo.taskId}:`, error);
-          return Promise.resolve({ 
-            success: false, 
-            error: error.message || "Failed to start tracking", 
-            fileName: taskInfo.fileName, 
-            index: taskInfo.index 
+          return Promise.resolve({
+            success: false,
+            error: error.message || "Failed to start tracking",
+            fileName: taskInfo.fileName,
+            index: taskInfo.index
           });
         }
       });
-      
+
       // Wait a moment for WebSocket subscriptions to initialize, then close dialog
       // This ensures WebSocket is connected and subscriptions are registered before component might unmount
       await new Promise(resolve => setTimeout(resolve, 200));
-      
+
       console.log(`Subscribed to ${successfulUploads.length} task(s) via WebSocket`);
-      
+
       // Close the dialog AFTER WebSocket subscriptions are created
       if (onUploadComplete) {
         onUploadComplete();
       }
-      
+
       // Redirect disabled - user stays on current page after upload
       // Wait for all tasks to complete
       const allResults = await Promise.all(trackingPromises);
       const successCount = allResults.filter(r => r.success).length;
-      
+
       // Show summary toast
       if (successCount === total) {
         toast({
@@ -369,7 +369,7 @@ export const ContractUploadCard = ({ onUploadComplete }) => {
           description: `${successCount}/${total} files processed successfully.`,
         });
       }
-      
+
     } catch (error) {
       toast({
         title: "Upload Error",
@@ -389,9 +389,9 @@ export const ContractUploadCard = ({ onUploadComplete }) => {
       <Card>
         <Celebrate celebrate={celebrate} />
         <CardHeader>
-          <CardTitle>Document Assessment</CardTitle>
+          <CardTitle>Choose files</CardTitle>
           <CardDescription>
-            Submit your documents for summarization.
+
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -406,9 +406,9 @@ export const ContractUploadCard = ({ onUploadComplete }) => {
                   size="lg"
                   onClick={handleFolderSelect}
                   disabled={session?.user?.isGuest}
-                  className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
+                  className="w-full"
                 >
-                  Upload Folder
+                  Choose a folder
                 </Button>
               </div>
 
@@ -427,6 +427,10 @@ export const ContractUploadCard = ({ onUploadComplete }) => {
                     ? "border-primary text-primary"
                     : "border-gray-300 text-gray-500"
                 )}
+                role="button"
+                tabIndex={0}
+                aria-label="Choose documents to upload"
+                onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); fileInputRef.current.click(); } }}
                 onClick={() => fileInputRef.current.click()}
               >
                 <div className="text-center">
@@ -447,7 +451,7 @@ export const ContractUploadCard = ({ onUploadComplete }) => {
                 multiple
                 className="hidden"
               />
-              
+
               <input
                 onChange={handleFileChange}
                 ref={folderInputRef}
@@ -486,7 +490,7 @@ export const ContractUploadCard = ({ onUploadComplete }) => {
                           variant="ghost"
                           size="sm"
                           onClick={() => {
-                            setSelectedFiles(files => 
+                            setSelectedFiles(files =>
                               files.filter((_, i) => i !== index)
                             );
                           }}

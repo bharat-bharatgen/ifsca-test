@@ -1,22 +1,22 @@
 "use client";
 
-import React from "react";
-import { Button } from "@/components/ui/button";
+import React, { useState } from "react";
+import { Button } from "@/components/chat/primitives";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { RefreshCcw, MoreHorizontal, Pencil, Trash, MenuIcon } from "lucide-react";
-import { ThemeToggle } from "@/components/custom/theme-toggle";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@/components/chat/primitives";
 import {
   Sheet,
   SheetContent,
   SheetTrigger,
-} from "@/components/ui/sheet";
+  SheetTitle,
+} from "@/components/chat/primitives";
 
 export default function MobileConversationSidebar({
   conversations,
@@ -30,64 +30,67 @@ export default function MobileConversationSidebar({
   onRenameClick,
   onDeleteClick,
 }) {
+  const [query, setQuery] = useState("");
+  const filtered = conversations.filter(c => (c.title || "Untitled conversation").toLowerCase().includes(query.toLowerCase()));
+
   return (
     <div className="lg:hidden">
       <Sheet open={isSheetOpen} onOpenChange={onSheetOpenChange}>
         <SheetTrigger asChild>
-          <Button variant="ghost" size="icon">
+          <Button variant="ghost" size="icon" aria-label="Open conversations">
             <MenuIcon className="h-6 w-6" />
           </Button>
         </SheetTrigger>
-        <SheetContent side="left" className="w-full p-0 sm:w-[400px]">
-          <Card className="flex h-full flex-col">
-            <CardHeader className="border-b">
+        <SheetContent side="left" className="p-0">
+          <Card className="flex h-full flex-col rounded-none border-0 bg-transparent shadow-none">
+            <CardHeader className="border-b pt-14 pb-4 px-4">
               <div className="close-btn">
                 <div className="flex items-center justify-between">
                   <div className="text-start">
-                    <h2 className="text-lg font-semibold dark:text-white">
+                    <SheetTitle className="text-lg font-semibold">
                       Conversations
-                    </h2>
+                    </SheetTitle>
                   </div>
                   <div className="flex items-center gap-2">
-                    <ThemeToggle />
-                    <button onClick={onRefresh}>
+                      <button aria-label="Refresh conversations" onClick={onRefresh}>
                       <RefreshCcw className="h-5 w-5" />
                     </button>
                   </div>
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="flex-grow p-0">
-              <ScrollArea className="h-[calc(100vh-240px)] p-2">
+            <CardContent className="flex-1 min-h-0 flex flex-col p-0">
+              <div className="px-3 py-2"><input aria-label="Search conversations" placeholder="Search conversations…" value={query} onChange={e => setQuery(e.target.value)} className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" /></div>
+              <ScrollArea className="flex-1 min-h-0 p-2">
                 {isLoadingConversations && (
-                  <div className="p-2 text-sm text-gray-500">Loading...</div>
+                  <div className="p-2 text-sm text-muted-foreground">Loading...</div>
                 )}
                 {!isLoadingConversations && conversations.length === 0 && (
-                  <div className="p-2 text-sm text-gray-500">
+                  <div className="p-2 text-sm text-muted-foreground">
                     No conversations yet
                   </div>
                 )}
                 <div className="space-y-1">
-                  {conversations.map((c) => {
+                  {filtered.map((c) => {
                     const isActive = conversationId === c.id;
                     return (
                       <div key={c.id} className="px-2">
                         <div
                           className={`group flex items-start gap-2 rounded-md px-2 py-2 ${isActive
-                              ? "border border-gray-200 bg-gray-100 text-gray-900 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                              : "text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800"
+                              ? "border border-border bg-accent text-accent-foreground "
+                              : "text-foreground hover:bg-accent"
                             }`}
                           title={c.title || "Untitled conversation"}
                         >
                           <button
-                            className="flex-1 text-left w-20"
+                            aria-current={isActive ? "page" : undefined} className="flex-1 min-w-0 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
                             onClick={() => onSelectConversation(c.id)}
                           >
-                            <div className="truncate text-sm font-medium dark:text-white">
+                            <div className="truncate text-sm font-medium ">
                               {c.title || "Untitled conversation"}
                             </div>
                             <div
-                              className={`truncate text-xs ${isActive ? "text-gray-600" : "text-gray-500"
+                              className={`truncate text-xs ${isActive ? "text-muted-foreground" : "text-muted-foreground"
                                 }`}
                             >
                               {new Date(

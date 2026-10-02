@@ -9,15 +9,15 @@ export function FilterControls({
   onDateRangeChange = () => {}
 }) {
   return (
-    <div className="lg:flex">
-      <div className="w-full">
+    <div className="flex flex-wrap gap-3">
+      <div className="min-w-0">
         <DateRangeFilter 
           fromDate={fromDate}
           toDate={toDate}
           onDateRangeChange={onDateRangeChange}
         />
       </div>
-      <div className="w-full">
+      <div className="min-w-0">
       <CustomerNameFilter 
         value={customerName}
         onChange={onCustomerNameChange}

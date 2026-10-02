@@ -24,6 +24,7 @@ export default async function AppLayout({ children }) {
       name: true,
       emailVerified: true,
       roleId: true,
+      role: { select: { name: true } },
       image: true,
     },
   });
@@ -33,13 +34,9 @@ export default async function AppLayout({ children }) {
   }
 
   return (
-    <div className="flex h-screen">
-      {/* <aside className="hidden max-w-[200px] flex-col md:flex z-30">
-        <AppNav />
-      </aside> */}
-      <main className="z-20 flex flex-col flex-1 w-full overflow-hidden overflow-y-scroll">
-        {children}
-      </main>
+    <div className="workspace-shell flex h-dvh flex-col">
+      <AppNav roleName={user.role?.name} />
+      <main className="flex flex-1 flex-col min-w-0 min-h-0 overflow-y-auto">{children}</main>
     </div>
   );
 }

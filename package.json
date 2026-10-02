@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "concurrently": "^8.2.2",
-    "ra-data-simple-rest": "^5.12.3",
-    "react-admin": "^5.12.3"
+    "ra-data-simple-rest": "^5.15.4",
+    "react-admin": "^5.15.4"
   }
 }

@@ -3,8 +3,7 @@
 import { SummaryCards } from "@/components/ui-dashboard/summary-cards";
 import { FilterControls } from "@/components/ui-dashboard/filter-controls";
 import { DataTable } from "@/components/ui-dashboard/data-table";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button, Dialog, DialogContent, DialogTitle } from "@/components/chat/primitives";
 import { ContractUploadCard } from "@/components/pages/app/contract-upload-card";
 import { TaskRestore } from "@/components/pages/app/task-restore";
 import { useState } from "react";
@@ -20,10 +19,10 @@ export default function UIDashboard() {
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
-  
+
   const { documents, isLoading, error, refresh } = useDocuments();
   const { count: aiChatCount, resolvedCount, isLoading: isChatCountLoading, refresh: refreshChatCount } = useAiChatCount();
-  
+
   // Get filters from URL params
   const customerNameFilter = searchParams.get('customerName') || '';
   const { fromDate, toDate } = parseDateParams(searchParams);
@@ -62,7 +61,7 @@ export default function UIDashboard() {
   const summaryData = useMemo(() => {
     const totalFiles = filteredDocuments.length;
     const uniqueTypes = new Set(filteredDocuments.map((d) => d.type || "")).size;
-    
+
     return {
       totalFiles,
       pendingFiles: aiChatCount, // Number of queries raised equals to the number of AI chats by user
@@ -85,23 +84,23 @@ export default function UIDashboard() {
   }));
 
   return (
-    <div className="p-6 space-y-6 bg-background">
+    <div className="mx-auto w-full max-w-7xl p-4 sm:p-8 space-y-8 bg-background">
       {/* Task Restore - Always mounted to restore pending tasks on page load */}
       <TaskRestore />
-      
+
       {/* Header Section with Refresh */}
       <div className="flex items-center justify-between">
         <div className="space-y-2">
-          <h1 className="text-3xl font-bold text-foreground">User Dashboard</h1>
+          <h1 className="text-3xl font-bold text-foreground">Documents</h1>
           <p className="text-muted-foreground">
-            Upload documents, and view status for quick action.
+
           </p>
         </div>
         <Button
           aria-label="Refresh"
           variant="ghost"
           size="sm"
-          className="h-16 w-16 p-0 hover:bg-muted rounded-full"
+          className="h-10 w-10 p-0 hover:bg-muted rounded-lg"
           onClick={() => {
             refresh();
             refreshChatCount();
@@ -116,46 +115,11 @@ export default function UIDashboard() {
       {/* Summary Cards */}
       <SummaryCards data={summaryData} />
 
-      {/* Filter Controls and Create Button */}
-      <div className="lg:flex items-center justify-between">
-        <div className="lg:w-1/2">
-        <div className="lg:flex items-center gap-5">
-          <div className="lg:w-2/3">
-          <FilterControls 
-            customerName={customerNameFilter}
-            onCustomerNameChange={handleCustomerNameChange}
-            fromDate={fromDate}
-            toDate={toDate}
-            onDateRangeChange={handleDateRangeChange}
-          />
-          </div>
-          <div className="lg:w-1/3">
-          {hasActiveFilters && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-12 py-5 w-full"
-              onClick={handleResetFilters}
-            >
-              <RotateCcw className="h-4 w-4 mr-2" />
-              Reset Filters
-            </Button>
-          )}
-          </div>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-3"><FilterControls customerName={customerNameFilter} onCustomerNameChange={handleCustomerNameChange} fromDate={fromDate} toDate={toDate} onDateRangeChange={handleDateRangeChange} />
+          {hasActiveFilters && <Button variant="ghost" size="sm" onClick={handleResetFilters}><RotateCcw className="mr-2 size-4" />Reset</Button>}
         </div>
-        </div>
-        <div className="lg:w-1/2 flex justify-center lg:justify-end">
-          <Button
-            className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm flex items-center lg:w-80 w-full"
-            onClick={() => setIsUploadOpen(true)}
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            <User className="h-4 w-4 mr-2" />
-            Upload New Document
-          </Button>
-        </div>
-
+        <Button onClick={() => setIsUploadOpen(true)}><Plus className="mr-2 size-4" />Upload documents</Button>
       </div>
 
       {/* Data Table */}
@@ -163,9 +127,9 @@ export default function UIDashboard() {
 
       <Dialog open={isUploadOpen} onOpenChange={setIsUploadOpen}>
         <DialogContent className="max-w-4xl">
-          <DialogHeader>
-            <DialogTitle>Upload and Analyze Document</DialogTitle>
-          </DialogHeader>
+          <div>
+            <DialogTitle>Upload documents</DialogTitle>
+          </div>
           <ContractUploadCard onUploadComplete={() => setIsUploadOpen(false)} />
         </DialogContent>
       </Dialog>
